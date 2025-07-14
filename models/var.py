@@ -58,7 +58,7 @@ class VAR(nn.Module):
         init_std = math.sqrt(1 / self.C / 3)
         self.num_classes = num_classes
         self.uniform_prob = torch.full((1, num_classes), fill_value=1.0 / num_classes, dtype=torch.float32, device=dist.get_device())
-        self.class_emb = nn.Embedding(self.num_classes + 1, self.C)
+        self.class_emb = nn.Embedding(self.num_classes + 1, self.C) # +1 for unconditional token
         nn.init.trunc_normal_(self.class_emb.weight.data, mean=0, std=init_std)
         self.pos_start = nn.Parameter(torch.empty(1, self.first_l, self.C))
         nn.init.trunc_normal_(self.pos_start.data, mean=0, std=init_std)
@@ -148,6 +148,7 @@ class VAR(nn.Module):
         elif isinstance(label_B, int):
             label_B = torch.full((B,), fill_value=self.num_classes if label_B < 0 else label_B, device=self.lvl_1L.device)
         
+        # Create both conditional and unconditional embeddings
         sos = cond_BD = self.class_emb(torch.cat((label_B, torch.full_like(label_B, fill_value=self.num_classes)), dim=0))
         
         lvl_pos = self.lvl_embed(self.lvl_1L) + self.pos_1LC
@@ -169,6 +170,8 @@ class VAR(nn.Module):
                 x = b(x=x, cond_BD=cond_BD_or_gss, attn_bias=None)
             logits_BlV = self.get_logits(x, cond_BD)
             
+            # During generation, use CFG formula:
+            # prediction = (1+cfg) * conditional_logits - cfg * unconditional_logits
             t = cfg * ratio
             logits_BlV = (1+t) * logits_BlV[:B] - t * logits_BlV[B:]
             
@@ -197,9 +200,13 @@ class VAR(nn.Module):
         """
         bg, ed = self.begin_ends[self.prog_si] if self.prog_si >= 0 else (0, self.L)
         B = x_BLCv_wo_first_l.shape[0]
-        with torch.cuda.amp.autocast(enabled=False):
+        
+        with torch.cuda.amp.autocast(enabled=False): # CLASSIFIER-FREE GUIDANCE TRAINING: Randomly drop class conditions
+            
+            # Randomly replace class labels with "unconditional" token (num_classes)
             label_B = torch.where(torch.rand(B, device=label_B.device) < self.cond_drop_rate, self.num_classes, label_B)
-            sos = cond_BD = self.class_emb(label_B)
+            # Convert class labels to embeddings
+            sos = cond_BD = self.class_emb(label_B) # Shape: (B, embed_dim)
             sos = sos.unsqueeze(1).expand(B, self.first_l, -1) + self.pos_start.expand(B, self.first_l, -1)
             
             if self.prog_si == 0: x_BLC = sos

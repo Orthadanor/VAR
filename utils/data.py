@@ -31,7 +31,13 @@ def build_dataset(
     train_set = DatasetFolder(root=osp.join(data_path, 'train'), loader=pil_loader, extensions=IMG_EXTENSIONS, transform=train_aug)
     val_set = DatasetFolder(root=osp.join(data_path, 'val'), loader=pil_loader, extensions=IMG_EXTENSIONS, transform=val_aug)
     num_classes = 1000
+    
+    num_classes = len(train_set.classes)  # Should be 10 for imagenette2-160
+    
     print(f'[Dataset] {len(train_set)=}, {len(val_set)=}, {num_classes=}')
+    print(f'[Classes] {train_set.classes}')
+    print(f'[Class mapping] {train_set.class_to_idx}')
+    
     print_aug(train_aug, '[train]')
     print_aug(val_aug, '[val]')
     

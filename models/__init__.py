@@ -5,6 +5,34 @@ from .quant import VectorQuantizer2
 from .var import VAR
 from .vqvae import VQVAE
 
+def build_vae_var_grayscale(
+    V=4096, Cvae=32, ch=160, share_quant_resi=4,
+    device='cuda', patch_nums=(1, 2, 3, 4, 5, 6, 8, 10, 13, 16),
+    depth=16, shared_aln=False, **kwargs
+):
+    """Build VAE and VAR for grayscale images"""
+    from models.vqvae_grayscale import VQVAEGrayscale
+    from models.var_grayscale import VARGrayscale
+    
+    # Build grayscale VQVAE
+    vae_local = VQVAEGrayscale(
+        vocab_size=V, z_channels=Cvae, ch=ch, 
+        test_mode=True, share_quant_resi=share_quant_resi, 
+        v_patch_nums=patch_nums
+    ).to(device)
+    
+    # Build grayscale VAR
+    var_wo_ddp = VARGrayscale(
+        vae_local=vae_local,
+        num_classes=1,  # Single class for unconditional
+        depth=depth, embed_dim=1024, num_heads=16, 
+        drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
+        norm_eps=1e-6, shared_aln=shared_aln, cond_drop_rate=1.0,  # Always unconditional
+        patch_nums=patch_nums,
+        **kwargs
+    ).to(device)
+    
+    return vae_local, var_wo_ddp
 
 def build_vae_var(
     # Shared args

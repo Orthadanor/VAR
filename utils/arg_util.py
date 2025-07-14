@@ -242,13 +242,13 @@ def init_dist_and_get_args():
     # update args: data loading
     args.device = dist.get_device()
     if args.pn == '256':
-        args.pn = '1_2_3_4_5_6_8_10_13_16'
+        args.pn = '1_2_3_4_5_6_8_10_13_16' # Default patch numbers for 256 resolution
     elif args.pn == '512':
         args.pn = '1_2_3_4_6_9_13_18_24_32'
     elif args.pn == '1024':
         args.pn = '1_2_3_4_5_7_9_12_16_21_27_36_48_64'
-    args.patch_nums = tuple(map(int, args.pn.replace('-', '_').split('_')))
-    args.resos = tuple(pn * args.patch_size for pn in args.patch_nums)
+    args.patch_nums = tuple(map(int, args.pn.replace('-', '_').split('_'))) # Result: (1, 2, 3, 4, 5, 6, 8, 10, 13, 16)
+    args.resos = tuple(pn * args.patch_size for pn in args.patch_nums) # Patch resolutions based on patch size
     args.data_load_reso = max(args.resos)
     
     # update args: bs and lr

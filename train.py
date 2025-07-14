@@ -39,9 +39,18 @@ def build_everything(args: arg_util.Args):
     # build data
     if not args.local_debug:
         print(f'[build PT data] ...\n')
-        num_classes, dataset_train, dataset_val = build_dataset(
-            args.data_path, final_reso=args.data_load_reso, hflip=args.hflip, mid_reso=args.mid_reso,
-        )
+        
+        # Use MRI dataset if specified
+        if 'IXI' in args.data_path or 'mri' in args.data_path.lower():
+            from utils.data_mri import build_mri_dataset_grayscale
+            num_classes, dataset_train, dataset_val = build_mri_dataset_grayscale(
+                args.data_path, final_reso=args.data_load_reso, hflip=args.hflip, mid_reso=args.mid_reso,
+            )
+        else:
+            # Original dataset loading
+            num_classes, dataset_train, dataset_val = build_dataset( # Including image resizing and augmentations
+                args.data_path, final_reso=args.data_load_reso, hflip=args.hflip, mid_reso=args.mid_reso,
+            )
         types = str((type(dataset_train).__name__, type(dataset_val).__name__))
         
         ld_val = DataLoader(
@@ -77,7 +86,7 @@ def build_everything(args: arg_util.Args):
     
     # build models
     from torch.nn.parallel import DistributedDataParallel as DDP
-    from models import VAR, VQVAE, build_vae_var
+    from models import VAR, VQVAE, build_vae_var, build_vae_var_grayscale
     from trainer import VARTrainer
     from utils.amp_sc import AmpOptimizer
     from utils.lr_control import filter_params
@@ -169,7 +178,7 @@ def build_everything(args: arg_util.Args):
 
 
 def main_training():
-    args: arg_util.Args = arg_util.init_dist_and_get_args()
+    args: arg_util.Args = arg_util.init_dist_and_get_args() # Parses command-line arguments and initializes distributed training environment
     if args.local_debug:
         torch.autograd.set_detect_anomaly(True)
     
@@ -177,7 +186,7 @@ def main_training():
         tb_lg, trainer,
         start_ep, start_it,
         iters_train, ld_train, ld_val
-    ) = build_everything(args)
+    ) = build_everything(args) # Includes dataset creation, model initialization, optimizer setup, and trainer instantiation
     
     # train
     start_time = time.time()
@@ -185,7 +194,7 @@ def main_training():
     best_val_loss_mean, best_val_loss_tail, best_val_acc_mean, best_val_acc_tail = 999, 999, -1, -1
     
     L_mean, L_tail = -1, -1
-    for ep in range(start_ep, args.ep):
+    for ep in range(start_ep, args.ep): # Training loop over epochs
         if hasattr(ld_train, 'sampler') and hasattr(ld_train.sampler, 'set_epoch'):
             ld_train.sampler.set_epoch(ep)
             if ep < 3:
@@ -205,7 +214,7 @@ def main_training():
         args.remain_time, args.finish_time = remain_time, finish_time
         
         AR_ep_loss = dict(L_mean=L_mean, L_tail=L_tail, acc_mean=acc_mean, acc_tail=acc_tail)
-        is_val_and_also_saving = (ep + 1) % 10 == 0 or (ep + 1) == args.ep
+        is_val_and_also_saving = (ep + 1) % 10 == 0 or (ep + 1) == args.ep # validation and saving
         if is_val_and_also_saving:
             val_loss_mean, val_loss_tail, val_acc_mean, val_acc_tail, tot, cost = trainer.eval_ep(ld_val)
             best_updated = best_val_loss_tail > val_loss_tail
@@ -274,14 +283,14 @@ def train_one_ep(ep: int, is_first_ep: bool, start_it: int, args: arg_util.Args,
         if it < start_it: continue
         if is_first_ep and it == start_it: warnings.resetwarnings()
         
-        inp = inp.to(args.device, non_blocking=True)
+        inp = inp.to(args.device, non_blocking=True) # GPU device
         label = label.to(args.device, non_blocking=True)
         
-        args.cur_it = f'{it+1}/{iters_train}'
+        args.cur_it = f'{it+1}/{iters_train}' # Current iteration tracking
         
         wp_it = args.wp * iters_train
         min_tlr, max_tlr, min_twd, max_twd = lr_wd_annealing(args.sche, trainer.var_opt.optimizer, args.tlr, args.twd, args.twde, g_it, wp_it, max_it, wp0=args.wp0, wpe=args.wpe)
-        args.cur_lr, args.cur_wd = max_tlr, max_twd
+        args.cur_lr, args.cur_wd = max_tlr, max_twd # Learning rate and weight decay tracking
         
         if args.pg: # default: args.pg == 0.0, means no progressive training, won't get into this
             if g_it <= wp_it: prog_si = args.pg0
