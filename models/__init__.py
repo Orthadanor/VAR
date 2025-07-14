@@ -8,7 +8,9 @@ from .vqvae import VQVAE
 def build_vae_var_grayscale(
     V=4096, Cvae=32, ch=160, share_quant_resi=4,
     device='cuda', patch_nums=(1, 2, 3, 4, 5, 6, 8, 10, 13, 16),
-    depth=16, shared_aln=False, **kwargs
+    depth=16, shared_aln=False, 
+    init_adaln=0.5, init_adaln_gamma=1e-5, init_head=0.02, init_std=-1,
+    **kwargs
 ):
     """Build VAE and VAR for grayscale images"""
     from models.vqvae_grayscale import VQVAEGrayscale
@@ -31,6 +33,9 @@ def build_vae_var_grayscale(
         patch_nums=patch_nums,
         **kwargs
     ).to(device)
+
+    var_wo_ddp.init_weights(init_adaln=init_adaln, init_adaln_gamma=init_adaln_gamma, 
+                           init_head=init_head, init_std=init_std)
     
     return vae_local, var_wo_ddp
 

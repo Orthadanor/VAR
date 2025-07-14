@@ -63,6 +63,7 @@ class VARTrainer(object):
             inp_B3HW = inp_B3HW.to(dist.get_device(), non_blocking=True)
             label_B = label_B.to(dist.get_device(), non_blocking=True)
             
+            # Convert images to discrete token indices
             gt_idx_Bl: List[ITen] = self.vae_local.img_to_idxBl(inp_B3HW)
             gt_BL = torch.cat(gt_idx_Bl, dim=1)
             x_BLCv_wo_first_l: Ten = self.quantize_local.idxBl_to_var_input(gt_idx_Bl)
@@ -100,14 +101,16 @@ class VARTrainer(object):
         
         # forward
         B, V = label_B.shape[0], self.vae_local.vocab_size
-        self.var.require_backward_grad_sync = stepping
+        self.var.require_backward_grad_sync = stepping # Enable/disable gradient synchronization across GPUs
         
+        # Convert images to discrete token indices
         gt_idx_Bl: List[ITen] = self.vae_local.img_to_idxBl(inp_B3HW)
-        gt_BL = torch.cat(gt_idx_Bl, dim=1)
+        gt_BL = torch.cat(gt_idx_Bl, dim=1)  # Ground truth tokens
+        # Convert token indices to VAR input format (removes first scale for teacher forcing)
         x_BLCv_wo_first_l: Ten = self.quantize_local.idxBl_to_var_input(gt_idx_Bl)
         
         with self.var_opt.amp_ctx:
-            self.var_wo_ddp.forward
+            self.var_wo_ddp.forward     # Forward pass through distributed model
             logits_BLV = self.var(label_B, x_BLCv_wo_first_l)
             loss = self.train_loss(logits_BLV.view(-1, V), gt_BL.view(-1)).view(B, -1)
             if prog_si >= 0:    # in progressive training

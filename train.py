@@ -90,14 +90,26 @@ def build_everything(args: arg_util.Args):
     from trainer import VARTrainer
     from utils.amp_sc import AmpOptimizer
     from utils.lr_control import filter_params
-    
-    vae_local, var_wo_ddp = build_vae_var(
-        V=4096, Cvae=32, ch=160, share_quant_resi=4,        # hard-coded VQVAE hyperparameters
-        device=dist.get_device(), patch_nums=args.patch_nums,
-        num_classes=num_classes, depth=args.depth, shared_aln=args.saln, attn_l2_norm=args.anorm,
-        flash_if_available=args.fuse, fused_if_available=args.fuse,
-        init_adaln=args.aln, init_adaln_gamma=args.alng, init_head=args.hd, init_std=args.ini,
-    )
+
+    # Use grayscale VAR for MRI data
+    if 'IXI' in args.data_path or 'mri' in args.data_path.lower():
+        vae_local, var_wo_ddp = build_vae_var_grayscale(
+            V=4096, Cvae=32, ch=160, share_quant_resi=4,
+            device=dist.get_device(), patch_nums=args.patch_nums,
+            depth=args.depth, shared_aln=args.saln,
+            flash_if_available=args.fuse, fused_if_available=args.fuse,
+            init_adaln=args.aln, init_adaln_gamma=args.alng, 
+            init_head=args.hd, init_std=args.ini,
+        )
+    else:
+        # Original VAR for RGB datasets
+        vae_local, var_wo_ddp = build_vae_var(
+            V=4096, Cvae=32, ch=160, share_quant_resi=4,
+            device=dist.get_device(), patch_nums=args.patch_nums,
+            num_classes=num_classes, depth=args.depth, shared_aln=args.saln, attn_l2_norm=args.anorm,
+            flash_if_available=args.fuse, fused_if_available=args.fuse,
+            init_adaln=args.aln, init_adaln_gamma=args.alng, init_head=args.hd, init_std=args.ini,
+        )
     
     vae_ckpt = 'vae_ch160v4096z32.pth'
     if dist.is_local_master():
@@ -109,6 +121,7 @@ def build_everything(args: arg_util.Args):
     vae_local: VQVAE = args.compile_model(vae_local, args.vfast)
     var_wo_ddp: VAR = args.compile_model(var_wo_ddp, args.tfast)
     var: DDP = (DDP if dist.initialized() else NullDDP)(var_wo_ddp, device_ids=[dist.get_local_rank()], find_unused_parameters=False, broadcast_buffers=False)
+    # Distributed Data Parallel (DDP) Wrapper
     
     print(f'[INIT] VAR model = {var_wo_ddp}\n\n')
     count_p = lambda m: f'{sum(p.numel() for p in m.parameters())/1e6:.2f}'
@@ -122,7 +135,7 @@ def build_everything(args: arg_util.Args):
         'gamma', 'beta',
         'ada_gss', 'moe_bias',
         'scale_mul',
-    })
+    }) # The tagged parameters will not have weight decay applied
     opt_clz = {
         'adam':  partial(torch.optim.AdamW, betas=(0.9, 0.95), fused=args.afuse),
         'adamw': partial(torch.optim.AdamW, betas=(0.9, 0.95), fused=args.afuse),
