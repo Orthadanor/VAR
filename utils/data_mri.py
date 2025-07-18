@@ -15,11 +15,11 @@ class MRIDatasetGrayscale(Dataset):
         self.root_dir = root_dir
         self.transform = transform
         self.files = []
-        self.class_to_idx = {'mri_brain': 0}  # Single class
-        self.classes = ['mri_brain']
+        self.class_to_idx = {'mid_brain': 0}  # Single class
+        self.classes = ['mid_brain']
         
         # Collect all .npy files
-        class_dir = osp.join(root_dir, 'mri_brain')
+        class_dir = osp.join(root_dir, 'mid_brain')
         if osp.exists(class_dir):
             for fname in os.listdir(class_dir):
                 if fname.endswith('.npy'):
@@ -62,8 +62,8 @@ def build_mri_dataset_grayscale(data_path: str, final_reso: int, hflip=False, mi
     train_aug, val_aug = transforms.Compose(train_aug), transforms.Compose(val_aug)
     
     # Build datasets
-    train_set = MRIDatasetGrayscale(root=osp.join(data_path, 'train'), transform=train_aug)
-    val_set = MRIDatasetGrayscale(root=osp.join(data_path, 'val'), transform=val_aug)
+    train_set = MRIDatasetGrayscale(root_dir=osp.join(data_path, 'train'), transform=train_aug)
+    val_set = MRIDatasetGrayscale(root_dir=osp.join(data_path, 'val'), transform=val_aug)
     num_classes = 1  # Single class for unconditional generation
     
     print(f'[MRI Dataset] {len(train_set)=}, {len(val_set)=}, {num_classes=}')

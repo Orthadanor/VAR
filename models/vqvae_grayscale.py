@@ -8,10 +8,17 @@ from models.vqvae import VQVAE, VectorQuantizer2
 class VQVAEGrayscale(VQVAE):
     """VQVAE modified for single-channel (grayscale) images"""
     
-    def __init__(self, vocab_size=4096, z_channels=32, ch=160, test_mode=True, 
-                 share_quant_resi=4, v_patch_nums=(1, 2, 3, 4, 5, 6, 8, 10, 13, 16)):
-        # Initialize parent with modified parameters
-        super().__init__(vocab_size, z_channels, ch, test_mode, share_quant_resi, v_patch_nums)
+    def __init__(self, vocab_size=4096, z_channels=32, ch=160, test_mode=False, 
+                 share_quant_resi=4, v_patch_nums=(1, 2, 3, 4, 5, 6, 8)):
+        # Initialize parent with keyword arguments to avoid order issues
+        super().__init__(
+            vocab_size=vocab_size,
+            z_channels=z_channels,
+            ch=ch,
+            test_mode=test_mode,
+            share_quant_resi=share_quant_resi,
+            v_patch_nums=v_patch_nums  # Now this will be passed correctly!
+        )
         
         # Modify the encoder and decoder for single channel input/output
         self._modify_for_grayscale()
