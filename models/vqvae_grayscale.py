@@ -8,13 +8,14 @@ from models.vqvae import VQVAE, VectorQuantizer2
 class VQVAEGrayscale(VQVAE):
     """VQVAE modified for single-channel (grayscale) images"""
     
-    def __init__(self, vocab_size=4096, z_channels=32, ch=160, test_mode=False, 
+    def __init__(self, vocab_size=4096, z_channels=32, ch=160, beta=1.0, test_mode=False, 
                  share_quant_resi=4, v_patch_nums=(1, 2, 3, 4, 5, 6, 8)):
         # Initialize parent with keyword arguments to avoid order issues
         super().__init__(
             vocab_size=vocab_size,
             z_channels=z_channels,
             ch=ch,
+            beta=beta,  # Default commitment loss weight
             test_mode=test_mode,
             share_quant_resi=share_quant_resi,
             v_patch_nums=v_patch_nums  # Now this will be passed correctly!

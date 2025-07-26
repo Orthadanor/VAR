@@ -16,6 +16,124 @@ from models.vqvae_grayscale import VQVAEGrayscale
 from utils.data_mri import build_mri_dataset_grayscale
 import argparse
 from torch.utils.tensorboard import SummaryWriter
+import json
+from datetime import datetime
+
+def log_vqvae_parameters(model, save_dir):
+    """Log all key VQVAE parameters to file and console"""
+    
+    # Create save directory if it doesn't exist
+    os.makedirs(save_dir, exist_ok=True)
+    
+    # Extract parameters from the model
+    # Access the actual VQVAE parameters from the grayscale wrapper
+    base_model = model  # VQVAEGrayscale inherits from VQVAE
+    quantizer = base_model.quantize
+    encoder_config = {
+        'in_channels': 1,  # Modified for grayscale
+        'ch_mult': (1, 1, 2, 2, 4),
+        'num_res_blocks': 2,
+        'using_sa': True,
+        'using_mid_sa': True,
+    }
+    
+    # Collect all parameters
+    vqvae_params = {
+        # Core VQVAE parameters
+        'vocab_size': base_model.vocab_size,
+        'z_channels': base_model.Cvae,
+        'ch': getattr(base_model.encoder, 'ch', 'Unknown'),  # Extract from encoder if available
+        'dropout': 0.0,  # Default value used in create_model
+        'beta': quantizer.beta,
+        'using_znorm': quantizer.using_znorm,
+        'quant_conv_ks': base_model.quant_conv.kernel_size[0],
+        'quant_resi': quantizer.quant_resi,
+        'share_quant_resi': quantizer.share_quant_resi,
+        'default_qresi_counts': len(quantizer.v_patch_nums),  # Automatically set
+        'v_patch_nums': list(quantizer.v_patch_nums),
+        'test_mode': base_model.test_mode,
+        
+        # Derived parameters
+        'downsample_factor': base_model.downsample,
+        'total_parameters': sum(p.numel() for p in base_model.parameters()),
+        'trainable_parameters': sum(p.numel() for p in base_model.parameters() if p.requires_grad),
+        
+        # Encoder/Decoder configuration
+        'encoder_config': encoder_config,
+        'in_channels': 1,  # Grayscale modification
+        'out_channels': 1,  # Grayscale modification
+        
+        # Quantizer details
+        'num_quantizer_scales': len(quantizer.v_patch_nums),
+        'quantizer_embedding_dim': quantizer.Cvae,
+        
+        # Training metadata
+        'model_type': 'VQVAEGrayscale',
+        'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    }
+    
+    # Create detailed parameter summary
+    param_summary = f"""
+╔═══════════════════════════════════════════════════════════════════════════════════════╗
+║                                  VQVAE MODEL PARAMETERS                               ║
+╠═══════════════════════════════════════════════════════════════════════════════════════╣
+║ Core Architecture Parameters:                                                        ║
+║   • vocab_size (codebook size):        {vqvae_params['vocab_size']:>8}                 ║
+║   • z_channels (embedding dim):        {vqvae_params['z_channels']:>8}                 ║
+║   • ch (base channels):                {vqvae_params['ch']:>8}                       ║
+║   • dropout:                           {vqvae_params['dropout']:>8.3f}               ║
+║   • beta (commitment loss weight):     {vqvae_params['beta']:>8.3f}               ║
+║   • using_znorm:                       {str(vqvae_params['using_znorm']):>8}         ║
+║                                                                                       ║
+║ Quantization Parameters:                                                              ║
+║   • quant_conv_ks (kernel size):       {vqvae_params['quant_conv_ks']:>8}             ║
+║   • quant_resi (residual weight):      {vqvae_params['quant_resi']:>8.3f}           ║
+║   • share_quant_resi:                  {vqvae_params['share_quant_resi']:>8}           ║
+║   • default_qresi_counts:              {vqvae_params['default_qresi_counts']:>8}       ║
+║   • num_quantizer_scales:              {vqvae_params['num_quantizer_scales']:>8}       ║
+║                                                                                       ║
+║ Multi-scale Configuration:                                                            ║
+║   • v_patch_nums: {str(vqvae_params['v_patch_nums']):>57} ║
+║   • downsample_factor:                 {vqvae_params['downsample_factor']:>8}×         ║
+║                                                                                       ║
+║ Model Structure:                                                                      ║
+║   • model_type:                        {vqvae_params['model_type']:>15}             ║
+║   • test_mode:                         {str(vqvae_params['test_mode']):>8}           ║
+║   • in_channels (grayscale):           {vqvae_params['in_channels']:>8}               ║
+║   • out_channels (grayscale):          {vqvae_params['out_channels']:>8}              ║
+║                                                                                       ║
+║ Parameter Counts:                                                                     ║
+║   • total_parameters:         {vqvae_params['total_parameters']:>12,} ({vqvae_params['total_parameters']/1e6:>6.2f}M) ║
+║   • trainable_parameters:     {vqvae_params['trainable_parameters']:>12,} ({vqvae_params['trainable_parameters']/1e6:>6.2f}M) ║
+║                                                                                       ║
+║ Created: {vqvae_params['created_at']:>71} ║
+╚═══════════════════════════════════════════════════════════════════════════════════════╝
+"""
+    
+    # Print to console
+    print(param_summary)
+    
+    # Save parameters to JSON file
+    json_path = os.path.join(save_dir, 'vqvae_parameters.json')
+    with open(json_path, 'w') as f:
+        json.dump(vqvae_params, f, indent=2)
+    
+    # Save detailed summary to text file
+    summary_path = os.path.join(save_dir, 'vqvae_parameter_summary.txt')
+    with open(summary_path, 'w') as f:
+        f.write(param_summary)
+        f.write(f"\n\nDetailed Parameter Dictionary:\n")
+        f.write("=" * 50 + "\n")
+        for key, value in vqvae_params.items():
+            f.write(f"{key:.<30}: {value}\n")
+    
+    print(f"\n📊 VQVAE parameters saved to:")
+    print(f"   • JSON format: {json_path}")
+    print(f"   • Summary format: {summary_path}")
+    print(f"   • Total parameters: {vqvae_params['total_parameters']:,} ({vqvae_params['total_parameters']/1e6:.2f}M)")
+    print(f"   • Codebook size: {vqvae_params['vocab_size']} entries")
+    print(f"   • Multi-scale levels: {vqvae_params['num_quantizer_scales']} ({vqvae_params['v_patch_nums']})")
+    print()
 
 def init_distributed():
     """Initialize distributed training for single GPU"""
@@ -111,15 +229,17 @@ class VQVAETrainer:
             'val_vq_loss': vq_loss.item()
         }
 
-def create_model(vocab_size=512, z_channels=16, ch=128):
+def create_model(vocab_size=512, z_channels=16, ch=128, beta=1.0):
     """Create grayscale VQVAE model"""
     model = VQVAEGrayscale(
         vocab_size=vocab_size,
         z_channels=z_channels,
         ch=ch,
+        beta=beta,
         test_mode=False,  # Enable training mode
         share_quant_resi=4,
-        v_patch_nums=(1, 2, 3, 4, 5, 6, 8)  # For 128x128 with 16x downsample
+        # v_patch_nums=(1, 2, 3, 4, 5, 6, 8)  # For 128x128 with 16x downsample
+        v_patch_nums=(1, 2, 4, 8)  # For 128x128 with 16x downsample
     )
 
     # DEBUG: Check what v_patch_nums is actually being used
@@ -210,6 +330,9 @@ def main():
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Model created with {total_params/1e6:.2f}M total parameters ({trainable_params/1e6:.2f}M trainable)")
     print(f"Downsample factor: {model.downsample}×")
+    
+    # Log all VQVAE parameters to file and console
+    log_vqvae_parameters(model, args.save_dir)
     
     trainer = VQVAETrainer(
         model, device, 
@@ -397,20 +520,7 @@ def main():
 
 if __name__ == '__main__':
     main()
-    
 
-# python train_vqvae_grayscale.py \
-#     --data_path /home/yuchenliu/Dataset/IXI/t1_np_masked_128_unconditional \
-#     --batch_size 64 \
-#     --epochs 100 \
-#     --final_reso 128 \
-#     --hflip \
-#     --vocab_size 256 \
-#     --z_channels 16 \
-#     --ch 128 \
-#     --save_dir ./vqvae_mri_checkpoints
-
-    
 # python train_vqvae_multiscale.py \
 #     --data_path /home/yuchenliu/Dataset/IXI/t1_np_masked_128_unconditional \
 #     --batch_size 64 \
