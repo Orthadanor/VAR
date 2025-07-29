@@ -32,18 +32,18 @@ def cleanup_distributed():
         dist.destroy_process_group()
         print("🧹 Cleaned up distributed training")
 
-def test_tokenization():
+def test_tokenization(same_shape=True):
     # Create model with the same parameters as your training
     vqvae = VQVAEGrayscale(
-        vocab_size=512,  # Changed from 4096 to match your training
+        vocab_size=128,  # Changed from 4096 to match your training
         z_channels=16,   # Changed from 32 to match your training  
-        ch=128,          # Changed from 160 to match your training
+        ch=64,          # Changed from 160 to match your training
         test_mode=False,
-        v_patch_nums=(1, 2, 3, 4, 5, 6, 8)  # Add your patch configuration
+        v_patch_nums=(1, 2, 4, 8)  # Add your patch configuration
     ).cuda()
     
     # Load checkpoint with proper key handling
-    checkpoint_path = '/home/yuchenliu/VAR/local_output/vqvae_checkpoints_v512_z16_c128_b025/vqvae_epoch_10.pth'
+    checkpoint_path = '/home/yuchenliu/VAR/local_output/vqvae_checkpoints_v128_z16_c64_b1/vqvae_final.pth'
     
     if not os.path.exists(checkpoint_path):
         print(f"❌ Checkpoint not found: {checkpoint_path}")
@@ -77,7 +77,7 @@ def test_tokenization():
         return
     
     # Get a sample
-    image, _ = val_set[0]
+    image, _ = val_set[9]
     print(f"Sample image shape: {image.shape}")
     image = image.unsqueeze(0).cuda()
     
@@ -113,7 +113,7 @@ def test_tokenization():
             print(f"    Total tokens: {total_tokens}")
             
             # Create output directory for saving images
-            output_dir = "/home/yuchenliu/VAR/local_output/vqvae_outputs"
+            output_dir = "/home/yuchenliu/VAR/local_output/vqvae_checkpoints_v128_z16_c64_b1/recon_imgs"
             os.makedirs(output_dir, exist_ok=True)
             
             # Save original image first
@@ -126,26 +126,48 @@ def test_tokenization():
             print(f"💾 Original image saved: {original_path}")
             
             # Test reconstruction - Show all reconstructed images
-            reconstructed_list = vqvae.idxBl_to_img(gt_idx_Bl, image.shape)
-            print(f"\n🔄 Reconstruction test:")
-            print(f"    Number of reconstructed images: {len(reconstructed_list)}")
-            
-            for i, reconstructed in enumerate(reconstructed_list):
-                recon_loss = torch.nn.functional.l1_loss(reconstructed, image)
-                print(f"    Scale {i} reconstruction:")
-                print(f"      Shape: {reconstructed.shape}")
-                print(f"      L1 loss: {recon_loss.item():.6f}")
-                print(f"      Range: [{reconstructed.min().item():.3f}, {reconstructed.max().item():.3f}]")
-                print(f"      Mean: {reconstructed.mean().item():.3f}, Std: {reconstructed.std().item():.3f}")
+            if same_shape:
+                reconstructed_list = vqvae.idxBl_to_img(gt_idx_Bl, True)
+                print(f"\n🔄 Reconstruction test (same_shape=True):")
+                print(f"    Number of reconstructed images: {len(reconstructed_list)}")
                 
-                # Save each reconstructed image
-                recon_img = reconstructed.squeeze().cpu().numpy()
-                # Normalize to 0-255 range for saving
-                recon_img_normalized = ((recon_img + 1) * 127.5).clip(0, 255).astype(np.uint8)
-                recon_pil = Image.fromarray(recon_img_normalized, mode='L')
-                recon_path = os.path.join(output_dir, f"reconstruction_scale_{i}.png")
-                recon_pil.save(recon_path)
-                print(f"      💾 Saved: {recon_path}")
+                for i, reconstructed in enumerate(reconstructed_list):
+                    recon_loss = torch.nn.functional.l1_loss(reconstructed, image)
+                    print(f"    Scale {i} reconstruction:")
+                    print(f"      Shape: {reconstructed.shape}")
+                    print(f"      L1 loss: {recon_loss.item():.6f}")
+                    print(f"      Range: [{reconstructed.min().item():.3f}, {reconstructed.max().item():.3f}]")
+                    print(f"      Mean: {reconstructed.mean().item():.3f}, Std: {reconstructed.std().item():.3f}")
+                    
+                    # Save each reconstructed image
+                    recon_img = reconstructed.squeeze().cpu().numpy()
+                    # Normalize to 0-255 range for saving
+                    recon_img_normalized = ((recon_img + 1) * 127.5).clip(0, 255).astype(np.uint8)
+                    recon_pil = Image.fromarray(recon_img_normalized, mode='L')
+                    recon_path = os.path.join(output_dir, f"reconstruction_scale_{i}.png")
+                    recon_pil.save(recon_path)
+                    print(f"      💾 Saved: {recon_path}")
+            else:
+                reconstructed_list = vqvae.idxBl_to_img(gt_idx_Bl, False)
+                print(f"\n🔄 Reconstruction test (same_shape=False - native scales):")
+                print(f"    Number of reconstructed images: {len(reconstructed_list)}")
+                
+                for i, reconstructed in enumerate(reconstructed_list):
+                    scale_size = reconstructed.shape[-1]
+                    print(f"    Scale {i} reconstruction (native {scale_size}×{scale_size}):")
+                    print(f"      Shape: {reconstructed.shape}")
+                    print(f"      Range: [{reconstructed.min().item():.3f}, {reconstructed.max().item():.3f}]")
+                    print(f"      Mean: {reconstructed.mean().item():.3f}, Std: {reconstructed.std().item():.3f}")
+                    print(f"      L1 loss: Skipped (different sizes)")
+                    
+                    # Save each reconstructed image at native resolution
+                    recon_img = reconstructed.squeeze().cpu().numpy()
+                    # Normalize to 0-255 range for saving
+                    recon_img_normalized = ((recon_img + 1) * 127.5).clip(0, 255).astype(np.uint8)
+                    recon_pil = Image.fromarray(recon_img_normalized, mode='L')
+                    recon_path = os.path.join(output_dir, f"reconstruction_scale_{i}_native_{scale_size}x{scale_size}.png")
+                    recon_pil.save(recon_path)
+                    print(f"      💾 Saved: {recon_path}")
             
             # Also test the standard forward pass for comparison
             print(f"\n🔄 Standard forward pass (for comparison):")
@@ -188,11 +210,11 @@ def test_model_properties():
     print("🏗️  Testing model architecture...")
     
     vqvae = VQVAEGrayscale(
-        vocab_size=512,
+        vocab_size=128,
         z_channels=16,
-        ch=128,
-        test_mode=True,
-        v_patch_nums=(1, 2, 3, 4, 5, 6, 8)
+        ch=64,
+        test_mode=False,
+        v_patch_nums=(1, 2, 4, 8)
     )
     
     print(f"Model properties:")
@@ -213,7 +235,11 @@ if __name__ == '__main__':
     test_model_properties()
     print()
     
+    # Set whether to use same_shape reconstruction
+    same_shape = True  # Change this to True for same_shape reconstruction, False for native scales
+    print(f"🔧 Using same_shape={same_shape} for reconstruction test\n")
+    
     # Test tokenization with checkpoint
-    test_tokenization()
+    test_tokenization(same_shape=same_shape)
     
     print("\nTest completed!")

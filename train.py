@@ -94,8 +94,8 @@ def build_everything(args: arg_util.Args):
     # Use grayscale VAR for MRI data
     if 'IXI' in args.data_path or 'mri' in args.data_path.lower():
         vae_local, var_wo_ddp = build_vae_var_grayscale(
-            V=4096, Cvae=32, ch=160, share_quant_resi=4,
-            device=dist.get_device(), patch_nums=args.patch_nums,
+            V=128, Cvae=16, ch=64, share_quant_resi=4,  # Updated to match your trained VQVAE
+            device=dist.get_device(), patch_nums=args.patch_nums,  # Use args.patch_nums from command line
             depth=args.depth, shared_aln=args.saln,
             flash_if_available=args.fuse, fused_if_available=args.fuse,
             init_adaln=args.aln, init_adaln_gamma=args.alng, 
@@ -111,12 +111,33 @@ def build_everything(args: arg_util.Args):
             init_adaln=args.aln, init_adaln_gamma=args.alng, init_head=args.hd, init_std=args.ini,
         )
     
-    vae_ckpt = 'vae_ch160v4096z32.pth'
+    # vae_ckpt = 'vae_ch160v4096z32.pth'
+    vae_ckpt = 'vqvae_v128_z16_c64_b1.pth'
     if dist.is_local_master():
         if not os.path.exists(vae_ckpt):
-            os.system(f'wget https://huggingface.co/FoundationVision/var/resolve/main/{vae_ckpt}')
+            print(f"❌ VQVAE checkpoint not found: {vae_ckpt}")
+            print("Please ensure you have copied your trained checkpoint to the root directory!")
+            raise FileNotFoundError(f"VQVAE checkpoint not found: {vae_ckpt}")
     dist.barrier()
-    vae_local.load_state_dict(torch.load(vae_ckpt, map_location='cpu'), strict=True)
+    
+    # vae_local.load_state_dict(torch.load(vae_ckpt, map_location='cpu'), strict=True)
+
+    # Load your custom trained VQVAE checkpoint
+    print(f"🔄 Loading VQVAE checkpoint: {vae_ckpt}")
+    vae_checkpoint = torch.load(vae_ckpt, map_location='cpu')
+    
+    # Handle different checkpoint formats
+    if 'model_state_dict' in vae_checkpoint:
+        # Your training format: {'model_state_dict': ..., 'epoch': ..., etc.}
+        vae_state_dict = vae_checkpoint['model_state_dict']
+        print(f"✅ Loaded VQVAE from training checkpoint (epoch: {vae_checkpoint.get('epoch', 'unknown')})")
+    else:
+        # Direct state dict format
+        vae_state_dict = vae_checkpoint
+        print(f"✅ Loaded VQVAE from direct state dict")
+    
+    vae_local.load_state_dict(vae_state_dict, strict=True)
+    print(f"🎯 VQVAE loaded successfully with vocab_size={vae_local.vocab_size}, z_channels={vae_local.Cvae}, ch={getattr(vae_local.encoder, 'ch', 'Unknown')}")
     
     vae_local: VQVAE = args.compile_model(vae_local, args.vfast)
     var_wo_ddp: VAR = args.compile_model(var_wo_ddp, args.tfast)

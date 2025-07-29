@@ -6,8 +6,8 @@ from .var import VAR
 from .vqvae import VQVAE
 
 def build_vae_var_grayscale(
-    V=4096, Cvae=32, ch=160, share_quant_resi=4,
-    device='cuda', patch_nums=(1, 2, 3, 4, 5, 6, 8, 10, 13, 16),
+    V=128, Cvae=16, ch=64, share_quant_resi=4,
+    device='cuda', patch_nums=(1, 2, 4, 8),
     depth=16, shared_aln=False, 
     init_adaln=0.5, init_adaln_gamma=1e-5, init_head=0.02, init_std=-1,
     **kwargs

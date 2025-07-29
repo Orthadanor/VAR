@@ -30,16 +30,17 @@ def plot_all_losses(log_dir):
         plt.plot(df['Epoch'], df['Value'], label=label, color=color,
                  linestyle=linestyle, marker=marker, linewidth=2, markersize=5)
 
-    plt.xlabel("Epoch")
-    plt.ylabel("Loss")
-    plt.title("Training and Validation Loss Curves")
+    plt.xlabel("Epoch", fontsize=14)
+    plt.ylabel("Loss", fontsize=14)
+    plt.title("v128_z16_c64_b1_1248 Compound Loss", fontsize=20)
     plt.ylim(0, 0.30)
     plt.grid(True)
-    plt.legend()
+    plt.legend(fontsize=12, loc='upper right')
+    plt.tick_params(axis='both', which='major', labelsize=12)
     plt.tight_layout()
 
     # Save plot
-    save_path = os.path.join(log_dir, "vqvae_loss_v128_z16_c64_b1.png")
+    save_path = os.path.join(log_dir, "compound_loss_v128_z16_c64_b1.png")
     plt.savefig(save_path)
     print(f"Saved plot to {save_path}")
     plt.close()

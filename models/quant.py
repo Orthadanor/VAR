@@ -114,9 +114,9 @@ class VectorQuantizer2(nn.Module):
             for si, pn in enumerate(self.v_patch_nums): # from small to large
                 h_BChw = ms_h_BChw[si]
                 if si < len(self.v_patch_nums) - 1:
-                    h_BChw = F.interpolate(h_BChw, size=(H, W), mode='bicubic')
-                h_BChw = self.quant_resi[si/(SN-1)](h_BChw)
-                f_hat.add_(h_BChw)
+                    h_BChw = F.interpolate(h_BChw, size=(H, W), mode='bicubic') # ← Upscale in feature space
+                h_BChw = self.quant_resi[si/(SN-1)](h_BChw)                     # ← Apply residual layers
+                f_hat.add_(h_BChw)                                              # ← Accumulate features
                 if last_one: ls_f_hat_BChw = f_hat
                 else: ls_f_hat_BChw.append(f_hat.clone())
         else:
