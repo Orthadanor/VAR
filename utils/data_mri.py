@@ -46,15 +46,15 @@ class MRIDatasetGrayscale(Dataset):
 
 def build_mri_dataset_grayscale(data_path: str, final_reso: int, hflip=False, mid_reso=1.125):
     # Build augmentations for grayscale
-    mid_reso = round(mid_reso * final_reso)
+    # mid_reso = round(mid_reso * final_reso)  # Not needed if no resizing
     train_aug, val_aug = [
-        transforms.Resize(mid_reso, interpolation=InterpolationMode.LANCZOS),
-        transforms.RandomCrop((final_reso, final_reso)),
+        # transforms.Resize(mid_reso, interpolation=InterpolationMode.LANCZOS),  # Commented out - no resizing
+        # transforms.RandomCrop((final_reso, final_reso)),  # Commented out - no cropping
         transforms.ToTensor(),  # This will create 1-channel tensor for grayscale
         normalize_01_into_pm1,
     ], [
-        transforms.Resize(mid_reso, interpolation=InterpolationMode.LANCZOS),
-        transforms.CenterCrop((final_reso, final_reso)),
+        # transforms.Resize(mid_reso, interpolation=InterpolationMode.LANCZOS),  # Commented out - no resizing
+        # transforms.CenterCrop((final_reso, final_reso)),  # Commented out - no cropping
         transforms.ToTensor(),  # This will create 1-channel tensor for grayscale
         normalize_01_into_pm1,
     ]
@@ -66,10 +66,19 @@ def build_mri_dataset_grayscale(data_path: str, final_reso: int, hflip=False, mi
     val_set = MRIDatasetGrayscale(root_dir=osp.join(data_path, 'val'), transform=val_aug)
     num_classes = 1  # Single class for unconditional generation
     
+    # Check data dimensions (without augmentation, should match your preprocessed data)
+    if len(train_set) > 0:
+        sample_img, _ = train_set[0]
+        print(f'[MRI Dataset] Sample image shape: {sample_img.shape}')
+        print(f'[MRI Dataset] Expected final_reso: {final_reso}x{final_reso}')
+        if sample_img.shape[-1] != final_reso or sample_img.shape[-2] != final_reso:
+            print(f'⚠️  WARNING: Sample image size {sample_img.shape[-2:]} does not match expected final_reso {final_reso}')
+            print(f'   Make sure your preprocessed data is already at the correct resolution!')
+    
     print(f'[MRI Dataset] {len(train_set)=}, {len(val_set)=}, {num_classes=}')
     print(f'[Classes] {train_set.classes}')
-    print_aug(train_aug, '[train]')
-    print_aug(val_aug, '[val]')
+    print_aug(train_aug, '[train] (NO resizing/cropping)')
+    print_aug(val_aug, '[val] (NO resizing/cropping)')
     
     return num_classes, train_set, val_set
 
@@ -112,14 +121,14 @@ def build_mri_dataset_grayscale(data_path: str, final_reso: int, hflip=False, mi
 
 # def build_mri_dataset(data_path: str, final_reso: int, hflip=False, mid_reso=1.125):
 #     # Build augmentations (same as original)
-#     mid_reso = round(mid_reso * final_reso)
+#     # mid_reso = round(mid_reso * final_reso)  # Not needed if no resizing
 #     train_aug, val_aug = [
-#         transforms.Resize(mid_reso, interpolation=InterpolationMode.LANCZOS),
-#         transforms.RandomCrop((final_reso, final_reso)),
+#         # transforms.Resize(mid_reso, interpolation=InterpolationMode.LANCZOS),  # Commented out - no resizing
+#         # transforms.RandomCrop((final_reso, final_reso)),  # Commented out - no cropping
 #         transforms.ToTensor(), normalize_01_into_pm1,
 #     ], [
-#         transforms.Resize(mid_reso, interpolation=InterpolationMode.LANCZOS),
-#         transforms.CenterCrop((final_reso, final_reso)),
+#         # transforms.Resize(mid_reso, interpolation=InterpolationMode.LANCZOS),  # Commented out - no resizing
+#         # transforms.CenterCrop((final_reso, final_reso)),  # Commented out - no cropping
 #         transforms.ToTensor(), normalize_01_into_pm1,
 #     ]
 #     if hflip: train_aug.insert(0, transforms.RandomHorizontalFlip())

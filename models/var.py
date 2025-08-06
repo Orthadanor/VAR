@@ -208,12 +208,14 @@ class VAR(nn.Module):
             # Convert class labels to embeddings
             sos = cond_BD = self.class_emb(label_B) # Shape: (B, embed_dim)
             sos = sos.unsqueeze(1).expand(B, self.first_l, -1) + self.pos_start.expand(B, self.first_l, -1)
+            # Create start-of-sequence tokens for the first scale
             
             if self.prog_si == 0: x_BLC = sos
             else: x_BLC = torch.cat((sos, self.word_embed(x_BLCv_wo_first_l.float())), dim=1)
             x_BLC += self.lvl_embed(self.lvl_1L[:, :ed].expand(B, -1)) + self.pos_1LC[:, :ed] # lvl: BLC;  pos: 1LC
         
-        attn_bias = self.attn_bias_for_masking[:, :, :ed, :ed]
+        # Apply attention mask for autoregressive property
+        attn_bias = self.attn_bias_for_masking[:, :, :ed, :ed] # Attention masking
         cond_BD_or_gss = self.shared_ada_lin(cond_BD)
         
         # hack: get the dtype if mixed precision is used
@@ -225,7 +227,7 @@ class VAR(nn.Module):
         attn_bias = attn_bias.to(dtype=main_type)
         
         AdaLNSelfAttn.forward
-        for i, b in enumerate(self.blocks):
+        for i, b in enumerate(self.blocks): # Pass through transformer blocks
             x_BLC = b(x=x_BLC, cond_BD=cond_BD_or_gss, attn_bias=attn_bias)
         x_BLC = self.get_logits(x_BLC.float(), cond_BD)
         

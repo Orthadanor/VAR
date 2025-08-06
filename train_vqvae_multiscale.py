@@ -6,8 +6,12 @@ import os
 import sys
 sys.path.append('/home/yuchenliu/VAR')  # Add VAR to path
 
+import socket
+
 # Add distributed training support
 import torch.distributed as dist
+# from lpips import LPIPS
+from lpips_grayscale import LPIPS
 
 # Add tqdm for progress bars
 from tqdm import tqdm
@@ -19,7 +23,7 @@ from torch.utils.tensorboard import SummaryWriter
 import json
 from datetime import datetime
 
-def log_vqvae_parameters(model, save_dir):
+def log_vqvae_parameters(model, save_dir, trainer=None):
     """Log all key VQVAE parameters to file and console"""
     
     # Create save directory if it doesn't exist
@@ -47,7 +51,7 @@ def log_vqvae_parameters(model, save_dir):
         'beta': quantizer.beta,
         'using_znorm': quantizer.using_znorm,
         'quant_conv_ks': base_model.quant_conv.kernel_size[0],
-        'quant_resi': quantizer.quant_resi,
+        # 'quant_resi': quantizer.quant_resi,
         'share_quant_resi': quantizer.share_quant_resi,
         'default_qresi_counts': len(quantizer.v_patch_nums),  # Automatically set
         'v_patch_nums': list(quantizer.v_patch_nums),
@@ -66,6 +70,10 @@ def log_vqvae_parameters(model, save_dir):
         # Quantizer details
         'num_quantizer_scales': len(quantizer.v_patch_nums),
         'quantizer_embedding_dim': quantizer.Cvae,
+        
+        # Training configuration
+        'codebook_weight': getattr(trainer, 'codebook_weight', 'Not Available') if trainer else 'Not Available',
+        'perceptual_weight': getattr(trainer, 'perceptual_weight', 'Not Available') if trainer else 'Not Available',
         
         # Training metadata
         'model_type': 'VQVAEGrayscale',
@@ -87,7 +95,6 @@ def log_vqvae_parameters(model, save_dir):
 ║                                                                                       ║
 ║ Quantization Parameters:                                                              ║
 ║   • quant_conv_ks (kernel size):       {vqvae_params['quant_conv_ks']:>8}             ║
-║   • quant_resi (residual weight):      {vqvae_params['quant_resi']:>8.3f}           ║
 ║   • share_quant_resi:                  {vqvae_params['share_quant_resi']:>8}           ║
 ║   • default_qresi_counts:              {vqvae_params['default_qresi_counts']:>8}       ║
 ║   • num_quantizer_scales:              {vqvae_params['num_quantizer_scales']:>8}       ║
@@ -95,6 +102,10 @@ def log_vqvae_parameters(model, save_dir):
 ║ Multi-scale Configuration:                                                            ║
 ║   • v_patch_nums: {str(vqvae_params['v_patch_nums']):>57} ║
 ║   • downsample_factor:                 {vqvae_params['downsample_factor']:>8}×         ║
+║                                                                                       ║
+║ Training Configuration:                                                               ║
+║   • codebook_weight:                   {vqvae_params['codebook_weight']:>8.3f}       ║
+║   • perceptual_weight:                 {vqvae_params['perceptual_weight']:>8.3f}     ║
 ║                                                                                       ║
 ║ Model Structure:                                                                      ║
 ║   • model_type:                        {vqvae_params['model_type']:>15}             ║
@@ -135,12 +146,21 @@ def log_vqvae_parameters(model, save_dir):
     print(f"   • Multi-scale levels: {vqvae_params['num_quantizer_scales']} ({vqvae_params['v_patch_nums']})")
     print()
 
+def find_free_port():
+    """Find a free port on localhost"""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(('', 0))
+        s.listen(1)
+        port = s.getsockname()[1]
+    return port
+
 def init_distributed():
     """Initialize distributed training for single GPU"""
     if not dist.is_initialized():
-        # Initialize for single GPU
+        # Initialize for single GPU with random free port
+        free_port = find_free_port()
         os.environ.setdefault('MASTER_ADDR', 'localhost')
-        os.environ.setdefault('MASTER_PORT', '12345')
+        os.environ.setdefault('MASTER_PORT', str(free_port))
         os.environ.setdefault('RANK', '0')
         os.environ.setdefault('WORLD_SIZE', '1')
         
@@ -150,7 +170,7 @@ def init_distributed():
             rank=0,
             world_size=1
         )
-        print("Initialized distributed training for single GPU")
+        print(f"Initialized distributed training for single GPU on port {free_port}")
 
 def cleanup_distributed():
     """Cleanup distributed training"""
@@ -159,7 +179,7 @@ def cleanup_distributed():
 
 class VQVAETrainer:
     def __init__(self, model, device, lr=1e-4, beta1=0.9, beta2=0.95, weight_decay=0.05, 
-                 codebook_weight=1.0, tb_writer=None):
+                 codebook_weight=1.0, perceptual_weight=1.0, tb_writer=None):
         self.model = model.to(device)
         self.device = device
         self.tb_writer = tb_writer
@@ -176,6 +196,8 @@ class VQVAETrainer:
         # Loss functions
         self.reconstruction_loss = nn.L1Loss()  # Simplified to direct mean
         self.codebook_weight = codebook_weight
+        self.perceptual_weight = perceptual_weight
+        self.perceptual_loss = LPIPS().to(device).eval()  # Use LPIPS for perceptual loss
         
     def training_step(self, batch, step):
         self.optimizer.zero_grad()
@@ -184,14 +206,19 @@ class VQVAETrainer:
         x, _ = batch  # x: [B, 1, H, W], _: class labels (unused)
         x = x.to(self.device)
         
-        # Forward pass
-        reconstructed, usages, vq_loss = self.model(x, ret_usages=True)
+        # Forward pass - now returns 5 values: reconstructed, usages, vq_loss, commitment_loss, codebook_loss
+        reconstructed, usages, vq_loss, commitment_loss, codebook_loss = self.model(x, ret_usages=True)
         
         # Reconstruction loss
         recon_loss = self.reconstruction_loss(reconstructed, x)
         
+        # Perceptual loss - convert to [-1, 1] range for LPIPS
+        x_normalized = 2.0 * x - 1.0  # Convert from [0,1] to [-1,1]
+        reconstructed_normalized = 2.0 * reconstructed - 1.0
+        p_loss = self.perceptual_loss(x_normalized, reconstructed_normalized)
+        
         # Total loss
-        total_loss = recon_loss + self.codebook_weight * vq_loss
+        total_loss = recon_loss + self.codebook_weight * vq_loss + self.perceptual_weight * p_loss
         
         total_loss.backward()
         self.optimizer.step()
@@ -201,6 +228,9 @@ class VQVAETrainer:
             self.tb_writer.add_scalar('Train/Total_Loss', total_loss.item(), step)
             self.tb_writer.add_scalar('Train/Reconstruction_Loss', recon_loss.item(), step)
             self.tb_writer.add_scalar('Train/VQ_Loss', vq_loss.item(), step)
+            self.tb_writer.add_scalar('Train/Commitment_Loss', commitment_loss.item(), step)
+            self.tb_writer.add_scalar('Train/Codebook_Loss', codebook_loss.item(), step)
+            self.tb_writer.add_scalar('Train/Perceptual_Loss', p_loss.item(), step)
             self.tb_writer.add_scalar('Train/Learning_Rate', self.optimizer.param_groups[0]['lr'], step)
             
             # Log codebook usage if available
@@ -212,6 +242,9 @@ class VQVAETrainer:
             'total_loss': total_loss.item(),
             'recon_loss': recon_loss.item(),
             'vq_loss': vq_loss.item(),
+            'commitment_loss': commitment_loss.item(),
+            'codebook_loss': codebook_loss.item(),
+            'perceptual_loss': p_loss.item(),
             'perplexity': usages[0] if usages else 0  # First scale usage as proxy
         }
     
@@ -219,14 +252,23 @@ class VQVAETrainer:
         with torch.no_grad():
             x, _ = batch
             x = x.to(self.device)
-            reconstructed, usages, vq_loss = self.model(x, ret_usages=True)
+            reconstructed, usages, vq_loss, commitment_loss, codebook_loss = self.model(x, ret_usages=True)
             recon_loss = self.reconstruction_loss(reconstructed, x)
-            total_loss = recon_loss + self.codebook_weight * vq_loss
+            
+            # Perceptual loss for validation
+            x_normalized = 2.0 * x - 1.0
+            reconstructed_normalized = 2.0 * reconstructed - 1.0
+            p_loss = self.perceptual_loss(x_normalized, reconstructed_normalized)
+            
+            total_loss = recon_loss + self.codebook_weight * vq_loss + self.perceptual_weight * p_loss
             
         return {
             'val_total_loss': total_loss.item(),
             'val_recon_loss': recon_loss.item(),
-            'val_vq_loss': vq_loss.item()
+            'val_vq_loss': vq_loss.item(),
+            'val_commitment_loss': commitment_loss.item(),
+            'val_codebook_loss': codebook_loss.item(),
+            'val_perceptual_loss': p_loss.item()
         }
 
 def create_model(vocab_size=512, z_channels=16, ch=128, beta=1.0):
@@ -244,7 +286,7 @@ def create_model(vocab_size=512, z_channels=16, ch=128, beta=1.0):
 
     # DEBUG: Check what v_patch_nums is actually being used
     print(f"Model v_patch_nums: {model.quantize.v_patch_nums}")
-    print(f"Expected v_patch_nums: (1, 2, 3, 4, 5, 6, 8)")
+    print(f"Expected v_patch_nums: (1, 2, 4, 8)")
     print(f"Downsample factor: {model.downsample}")
     
     # # Explicitly enable gradients for all parameters
@@ -305,6 +347,8 @@ def main():
     parser.add_argument('--ch', type=int, default=128)              # Reduced default
     parser.add_argument('--codebook_weight', type=float, default=1.0)
     parser.add_argument('--val_freq', type=int, default=20, help='Validation frequency in steps')
+    parser.add_argument('--perceptual_weight', type=float, default=1.0)
+
     args = parser.parse_args()
     
     # Initialize distributed training
@@ -331,17 +375,18 @@ def main():
     print(f"Model created with {total_params/1e6:.2f}M total parameters ({trainable_params/1e6:.2f}M trainable)")
     print(f"Downsample factor: {model.downsample}×")
     
-    # Log all VQVAE parameters to file and console
-    log_vqvae_parameters(model, args.save_dir)
-    
     trainer = VQVAETrainer(
         model, device, 
         lr=args.lr, 
         beta1=0.9, beta2=0.95,           # VAR-style optimizer params
         weight_decay=args.weight_decay,
         codebook_weight=args.codebook_weight,
+        perceptual_weight=args.perceptual_weight,
         tb_writer=tb_writer
     )
+    
+    # Log all VQVAE parameters to file and console (now with trainer for weight values)
+    log_vqvae_parameters(model, args.save_dir, trainer)
     
     # Create data loaders using existing MRI dataset infrastructure
     train_loader, val_loader, num_classes = create_dataloaders(
@@ -376,13 +421,19 @@ def main():
         avg_val_loss = sum(m['val_total_loss'] for m in val_metrics) / len(val_metrics)
         avg_val_recon = sum(m['val_recon_loss'] for m in val_metrics) / len(val_metrics)
         avg_val_vq = sum(m['val_vq_loss'] for m in val_metrics) / len(val_metrics)
+        avg_val_commitment = sum(m['val_commitment_loss'] for m in val_metrics) / len(val_metrics)
+        avg_val_codebook = sum(m['val_codebook_loss'] for m in val_metrics) / len(val_metrics)
+        avg_val_perceptual = sum(m['val_perceptual_loss'] for m in val_metrics) / len(val_metrics)
         
         # Log validation metrics to tensorboard
         tb_writer.add_scalar('Step/Val_Total_Loss', avg_val_loss, global_step)
         tb_writer.add_scalar('Step/Val_Recon_Loss', avg_val_recon, global_step)
         tb_writer.add_scalar('Step/Val_VQ_Loss', avg_val_vq, global_step)
+        tb_writer.add_scalar('Step/Val_Commitment_Loss', avg_val_commitment, global_step)
+        tb_writer.add_scalar('Step/Val_Codebook_Loss', avg_val_codebook, global_step)
+        tb_writer.add_scalar('Step/Val_Perceptual_Loss', avg_val_perceptual, global_step)
         
-        return avg_val_loss, avg_val_recon, avg_val_vq
+        return avg_val_loss, avg_val_recon, avg_val_vq, avg_val_commitment, avg_val_codebook, avg_val_perceptual
     
     try:
         # Create main progress bar for all epochs
@@ -413,6 +464,9 @@ def main():
                     'Loss': f"{metrics['total_loss']:.4f}",
                     'Recon': f"{metrics['recon_loss']:.4f}",
                     'VQ': f"{metrics['vq_loss']:.4f}",
+                    'Commit': f"{metrics['commitment_loss']:.4f}",
+                    'Codebook': f"{metrics['codebook_loss']:.4f}",
+                    'Perc': f"{metrics['perceptual_loss']:.4f}",
                     'Perp': f"{metrics['perplexity']:.1f}"
                 })
                 
@@ -420,12 +474,12 @@ def main():
                 
                 # Run validation every val_freq steps
                 if global_step % args.val_freq == 0:
-                    val_loss, val_recon, val_vq = run_validation()
+                    val_loss, val_recon, val_vq, val_commitment, val_codebook, val_perceptual = run_validation()
                     
                     # Print validation results alongside training metrics
                     tqdm.write(f"\n Step {global_step} Validation Results:")
-                    tqdm.write(f"  Training  → Loss: {metrics['total_loss']:.6f}, Recon: {metrics['recon_loss']:.6f}, VQ: {metrics['vq_loss']:.6f}")
-                    tqdm.write(f"  Validation → Loss: {val_loss:.6f}, Recon: {val_recon:.6f}, VQ: {val_vq:.6f}")
+                    tqdm.write(f"  Training  → Loss: {metrics['total_loss']:.6f}, Recon: {metrics['recon_loss']:.6f}, VQ: {metrics['vq_loss']:.6f}, Commit: {metrics['commitment_loss']:.6f}, Codebook: {metrics['codebook_loss']:.6f}, Perc: {metrics['perceptual_loss']:.6f}")
+                    tqdm.write(f"  Validation → Loss: {val_loss:.6f}, Recon: {val_recon:.6f}, VQ: {val_vq:.6f}, Commit: {val_commitment:.6f}, Codebook: {val_codebook:.6f}, Perc: {val_perceptual:.6f}")
                     
                     # Update main progress bar with validation info
                     main_pbar.set_postfix({
@@ -434,7 +488,10 @@ def main():
                         'T_Loss': f"{metrics['total_loss']:.4f}",
                         'V_Loss': f"{val_loss:.4f}",
                         'V_Recon': f"{val_recon:.4f}",
-                        'V_VQ': f"{val_vq:.4f}"
+                        'V_VQ': f"{val_vq:.4f}",
+                        'V_Commit': f"{val_commitment:.4f}",
+                        'V_Codebook': f"{val_codebook:.4f}",
+                        'V_Perc': f"{val_perceptual:.4f}"
                     })
                     
                     # Set model back to training mode
@@ -455,7 +512,10 @@ def main():
                     val_pbar.set_postfix({
                         'Val_Loss': f"{metrics['val_total_loss']:.4f}",
                         'Val_Recon': f"{metrics['val_recon_loss']:.4f}",
-                        'Val_VQ': f"{metrics['val_vq_loss']:.4f}"
+                        'Val_VQ': f"{metrics['val_vq_loss']:.4f}",
+                        'Val_Commit': f"{metrics['val_commitment_loss']:.4f}",
+                        'Val_Codebook': f"{metrics['val_codebook_loss']:.4f}",
+                        'Val_Perc': f"{metrics['val_perceptual_loss']:.4f}"
                     })
             val_pbar.close()
             
@@ -466,6 +526,12 @@ def main():
             avg_val_recon = sum(m['val_recon_loss'] for m in val_metrics) / len(val_metrics)
             avg_train_vq = sum(m['vq_loss'] for m in train_metrics) / len(train_metrics)
             avg_val_vq = sum(m['val_vq_loss'] for m in val_metrics) / len(val_metrics)
+            avg_train_commitment = sum(m['commitment_loss'] for m in train_metrics) / len(train_metrics)
+            avg_val_commitment = sum(m['val_commitment_loss'] for m in val_metrics) / len(val_metrics)
+            avg_train_codebook = sum(m['codebook_loss'] for m in train_metrics) / len(train_metrics)
+            avg_val_codebook = sum(m['val_codebook_loss'] for m in val_metrics) / len(val_metrics)
+            avg_train_perceptual = sum(m['perceptual_loss'] for m in train_metrics) / len(train_metrics)
+            avg_val_perceptual = sum(m['val_perceptual_loss'] for m in val_metrics) / len(val_metrics)
             
             # Log epoch metrics to tensorboard
             tb_writer.add_scalar('Epoch/Train_Total_Loss', avg_train_loss, epoch)
@@ -474,12 +540,21 @@ def main():
             tb_writer.add_scalar('Epoch/Val_Recon_Loss', avg_val_recon, epoch)
             tb_writer.add_scalar('Epoch/Train_VQ_Loss', avg_train_vq, epoch)
             tb_writer.add_scalar('Epoch/Val_VQ_Loss', avg_val_vq, epoch)
+            tb_writer.add_scalar('Epoch/Train_Commitment_Loss', avg_train_commitment, epoch)
+            tb_writer.add_scalar('Epoch/Val_Commitment_Loss', avg_val_commitment, epoch)
+            tb_writer.add_scalar('Epoch/Train_Codebook_Loss', avg_train_codebook, epoch)
+            tb_writer.add_scalar('Epoch/Val_Codebook_Loss', avg_val_codebook, epoch)
+            tb_writer.add_scalar('Epoch/Train_Perceptual_Loss', avg_train_perceptual, epoch)
+            tb_writer.add_scalar('Epoch/Val_Perceptual_Loss', avg_val_perceptual, epoch)
             
             # Print epoch summary
             tqdm.write(f"\n┌─ Epoch {epoch+1}/{args.epochs} Summary (Step {global_step}) ─┐")
             tqdm.write(f"│ Train Loss: {avg_train_loss:.6f} │ Val Loss: {avg_val_loss:.6f}   │")
             tqdm.write(f"│ Train Recon: {avg_train_recon:.6f} │ Val Recon: {avg_val_recon:.6f} │")
             tqdm.write(f"│ Train VQ: {avg_train_vq:.6f}     │ Val VQ: {avg_val_vq:.6f}     │")
+            tqdm.write(f"│ Train Commit: {avg_train_commitment:.6f} │ Val Commit: {avg_val_commitment:.6f} │")
+            tqdm.write(f"│ Train Codebook: {avg_train_codebook:.6f} │ Val Codebook: {avg_val_codebook:.6f} │")
+            tqdm.write(f"│ Train Perc: {avg_train_perceptual:.6f}  │ Val Perc: {avg_val_perceptual:.6f}  │")
             tqdm.write(f"└─────────────────────────────────────────────────────────────┘\n")
             
             # Save checkpoint

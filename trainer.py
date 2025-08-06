@@ -128,15 +128,15 @@ class VARTrainer(object):
         grad_norm, scale_log2 = self.var_opt.backward_clip_step(loss=loss, stepping=stepping)
         
         # log
-        pred_BL = logits_BLV.data.argmax(dim=-1)
+        pred_BL = logits_BLV.data.argmax(dim=-1) # Predicted token indices
         if it == 0 or it in metric_lg.log_iters:
             Lmean = self.val_loss(logits_BLV.data.view(-1, V), gt_BL.view(-1)).item()
-            acc_mean = (pred_BL == gt_BL).float().mean().item() * 100
+            acc_mean = (pred_BL == gt_BL).float().mean().item() * 100 # Mean accuracy across all tokens
             if prog_si >= 0:    # in progressive training
                 Ltail = acc_tail = -1
             else:               # not in progressive training
                 Ltail = self.val_loss(logits_BLV.data[:, -self.last_l:].reshape(-1, V), gt_BL[:, -self.last_l:].reshape(-1)).item()
-                acc_tail = (pred_BL[:, -self.last_l:] == gt_BL[:, -self.last_l:]).float().mean().item() * 100
+                acc_tail = (pred_BL[:, -self.last_l:] == gt_BL[:, -self.last_l:]).float().mean().item() * 100 # Accuracy on finest scale
             grad_norm = grad_norm.item()
             metric_lg.update(Lm=Lmean, Lt=Ltail, Accm=acc_mean, Acct=acc_tail, tnm=grad_norm)
         

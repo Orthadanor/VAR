@@ -32,7 +32,7 @@ def cleanup_distributed():
         dist.destroy_process_group()
         print("🧹 Cleaned up distributed training")
 
-def test_tokenization(same_shape=True):
+def test_tokenization(log_dir, same_shape=True):
     # Create model with the same parameters as your training
     vqvae = VQVAEGrayscale(
         vocab_size=128,  # Changed from 4096 to match your training
@@ -43,7 +43,9 @@ def test_tokenization(same_shape=True):
     ).cuda()
     
     # Load checkpoint with proper key handling
-    checkpoint_path = '/home/yuchenliu/VAR/local_output/vqvae_checkpoints_v128_z16_c64_b1/vqvae_final.pth'
+    # checkpoint_path = '/home/yuchenliu/VAR/local_output/vqvae_checkpoints_v128_z16_c64_b1/vqvae_final.pth'
+    # checkpoint_path = '/home/yuchenliu/VAR/local_output/vqvae_checkpoints_v128_z16_c64_b1_lpips/vqvae_epoch_150.pth'
+    checkpoint_path = os.path.join(log_dir, 'vqvae_epoch_150.pth')
     
     if not os.path.exists(checkpoint_path):
         print(f"❌ Checkpoint not found: {checkpoint_path}")
@@ -113,7 +115,8 @@ def test_tokenization(same_shape=True):
             print(f"    Total tokens: {total_tokens}")
             
             # Create output directory for saving images
-            output_dir = "/home/yuchenliu/VAR/local_output/vqvae_checkpoints_v128_z16_c64_b1/recon_imgs"
+            # output_dir = "/home/yuchenliu/VAR/local_output/vqvae_checkpoints_v128_z16_c64_b1/recon_imgs"
+            output_dir = os.path.join(log_dir, "recon_imgs")
             os.makedirs(output_dir, exist_ok=True)
             
             # Save original image first
@@ -176,7 +179,7 @@ def test_tokenization(same_shape=True):
             if not dist.is_initialized():
                 init_distributed()
             
-            reconstructed_std, usages, vq_loss = vqvae(image, ret_usages=True)
+            reconstructed_std, usages, vq_loss, commitment_loss, codebook_loss = vqvae(image, ret_usages=True)
             recon_loss_std = torch.nn.functional.l1_loss(reconstructed_std, image)
             print(f"    Standard reconstruction shape: {reconstructed_std.shape}")
             print(f"    Standard reconstruction L1 loss: {recon_loss_std.item():.6f}")
@@ -240,6 +243,6 @@ if __name__ == '__main__':
     print(f"🔧 Using same_shape={same_shape} for reconstruction test\n")
     
     # Test tokenization with checkpoint
-    test_tokenization(same_shape=same_shape)
+    test_tokenization(log_dir="/home/yuchenliu/VAR/local_output/vqvae_checkpoints_v128_z16_c64_b1_lpips", same_shape=False)
     
     print("\nTest completed!")

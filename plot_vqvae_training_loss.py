@@ -30,13 +30,13 @@ def plot_all_losses(log_dir):
         plt.plot(df['Epoch'], df['Value'], label=label, color=color,
                  linestyle=linestyle, marker=marker, linewidth=2, markersize=5)
 
-    plt.xlabel("Epoch", fontsize=14)
-    plt.ylabel("Loss", fontsize=14)
-    plt.title("v128_z16_c64_b1_1248 Compound Loss", fontsize=20)
+    plt.xlabel("Epoch", fontsize=20)
+    plt.ylabel("Loss", fontsize=20)
+    plt.title("v128_z16_c64_b1_1248 Compound Loss", fontsize=24)
     plt.ylim(0, 0.30)
     plt.grid(True)
-    plt.legend(fontsize=12, loc='upper right')
-    plt.tick_params(axis='both', which='major', labelsize=12)
+    plt.legend(fontsize=16, loc='upper right')
+    plt.tick_params(axis='both', which='major', labelsize=16)
     plt.tight_layout()
 
     # Save plot

@@ -14,10 +14,13 @@ def inspect_data_format(data_path: str):
         print("No .npy files found in the directory.")
         return
     
+    step = 0
     for fname in files:
         file_path = osp.join(class_dir, fname)
         data = np.load(file_path)
-        print(f"File: {fname}, Shape: {data.shape}, Dtype: {data.dtype}")
+        step += 1
+        # print(f"File: {fname}, Shape: {data.shape}, Dtype: {data.dtype}")
+    print(step)
         
 if __name__ == "__main__":
     inspect_data_format('/home/yuchenliu/Dataset/IXI/t1_np_masked_128_unconditional/train/mid_brain')

@@ -351,14 +351,14 @@ def main():
 if __name__ == '__main__':
     main()
     
-python train_vqvae_multiscale.py \
-    --data_path /path/to/your/mri/data \
-    --batch_size 8 \
-    --epochs 100 \
-    --final_reso 256 \
-    --pixel_weight 1.0 \
-    --perceptual_weight 1.0 \
-    --codebook_weight 1.0 \
-    --vocab_size 4096 \
-    --z_channels 32 \
-    --ch 160
+# python train_vqvae_multiscale.py \
+#     --data_path /path/to/your/mri/data \
+#     --batch_size 8 \
+#     --epochs 100 \
+#     --final_reso 256 \
+#     --pixel_weight 1.0 \
+#     --perceptual_weight 1.0 \
+#     --codebook_weight 1.0 \
+#     --vocab_size 4096 \
+#     --z_channels 32 \
+#     --ch 160

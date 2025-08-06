@@ -23,6 +23,7 @@ class VectorQuantizer2(nn.Module):
         self.Cvae: int = Cvae
         self.using_znorm: bool = using_znorm
         self.v_patch_nums: Tuple[int] = v_patch_nums
+        self.share_quant_resi: int = share_quant_resi
         
         self.quant_resi_ratio = quant_resi
         if share_quant_resi == 0:   # non-shared: \phi_{1 to K} for K scales
@@ -60,6 +61,8 @@ class VectorQuantizer2(nn.Module):
         
         with torch.cuda.amp.autocast(enabled=False):
             mean_vq_loss: torch.Tensor = 0.0
+            mean_commitment_loss: torch.Tensor = 0.0
+            mean_codebook_loss: torch.Tensor = 0.0
             vocab_hit_V = torch.zeros(self.vocab_size, dtype=torch.float, device=f_BChw.device)
             SN = len(self.v_patch_nums)
             for si, pn in enumerate(self.v_patch_nums): # from small to large
@@ -92,16 +95,28 @@ class VectorQuantizer2(nn.Module):
                     else: self.ema_vocab_hit_SV[si].mul_(0.99).add_(hit_V.mul(0.01))
                     self.record_hit += 1
                 vocab_hit_V.add_(hit_V)
-                mean_vq_loss += F.mse_loss(f_hat.data, f_BChw).mul_(self.beta) + F.mse_loss(f_hat, f_no_grad)
+                
+                # Calculate losses for this scale
+                commitment_loss = F.mse_loss(f_hat.data, f_BChw)
+                codebook_loss = F.mse_loss(f_hat, f_no_grad)
+                scale_vq_loss = commitment_loss.mul_(self.beta) + codebook_loss
+                
+                # Accumulate losses
+                mean_commitment_loss += commitment_loss
+                mean_codebook_loss += codebook_loss
+                mean_vq_loss += scale_vq_loss
             
+            # Normalize by number of scales
             mean_vq_loss *= 1. / SN
+            mean_commitment_loss *= 1. / SN
+            mean_codebook_loss *= 1. / SN
             f_hat = (f_hat.data - f_no_grad).add_(f_BChw)
         
         margin = tdist.get_world_size() * (f_BChw.numel() / f_BChw.shape[1]) / self.vocab_size * 0.08
         # margin = pn*pn / 100
         if ret_usages: usages = [(self.ema_vocab_hit_SV[si] >= margin).float().mean().item() * 100 for si, pn in enumerate(self.v_patch_nums)]
         else: usages = None
-        return f_hat, usages, mean_vq_loss
+        return f_hat, usages, mean_vq_loss, mean_commitment_loss, mean_codebook_loss
     # ===================== `forward` is only used in VAE training =====================
     
     def embed_to_fhat(self, ms_h_BChw: List[torch.Tensor], all_to_max_scale=True, last_one=False) -> Union[List[torch.Tensor], torch.Tensor]:
@@ -207,6 +222,7 @@ class Phi(nn.Conv2d):
 
 
 class PhiShared(nn.Module):
+    "All scales share a single Phi module, ignores scale si/(SN-1)"
     def __init__(self, qresi: Phi):
         super().__init__()
         self.qresi: Phi = qresi

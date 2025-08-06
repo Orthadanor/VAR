@@ -18,3 +18,8 @@ local_output*
 *.log
 *.txt
 *.ipynb
+checkpoints/
+
+generated_mri_samples.png
+check_npy_format.py
+test_batch.py

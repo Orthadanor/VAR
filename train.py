@@ -123,7 +123,7 @@ def build_everything(args: arg_util.Args):
     # vae_local.load_state_dict(torch.load(vae_ckpt, map_location='cpu'), strict=True)
 
     # Load your custom trained VQVAE checkpoint
-    print(f"🔄 Loading VQVAE checkpoint: {vae_ckpt}")
+    print(f"Loading VQVAE checkpoint: {vae_ckpt}")
     vae_checkpoint = torch.load(vae_ckpt, map_location='cpu')
     
     # Handle different checkpoint formats
@@ -240,6 +240,7 @@ def main_training():
             ep, ep == start_ep, start_it if ep == start_ep else 0, args, tb_lg, ld_train, iters_train, trainer
         )
         
+        # Metrics: mean and tail cross-entropy losses, accuracies, and gradient norms
         L_mean, L_tail, acc_mean, acc_tail, grad_norm = stats['Lm'], stats['Lt'], stats['Accm'], stats['Acct'], stats['tnm']
         best_L_mean, best_acc_mean = min(best_L_mean, L_mean), max(best_acc_mean, acc_mean)
         if L_tail != -1: best_L_tail, best_acc_tail = min(best_L_tail, L_tail), max(best_acc_tail, acc_tail)
