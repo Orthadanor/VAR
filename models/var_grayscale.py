@@ -63,7 +63,8 @@ class VARGrayscale(VAR):
         # Use unconditional embedding for all samples
         sos = cond_BD = self.class_emb.expand(B, -1)
         
-        lvl_pos = self.lvl_embed(self.lvl_1L) + self.pos_1LC
+        # Learned level embeddings and absolute positional embeddings for all token positions
+        lvl_pos = self.lvl_embed(self.lvl_1L) + self.pos_1LC # level-aware and positional information
         next_token_map = sos.unsqueeze(1).expand(B, self.first_l, -1) + self.pos_start.expand(B, self.first_l, -1) + lvl_pos[:, :self.first_l]
         
         cur_L = 0
@@ -99,3 +100,125 @@ class VARGrayscale(VAR):
         for b in self.blocks: b.attn.kv_caching(False)
         # Return grayscale images (B, 1, H, W) in [0, 1]
         return self.vae_proxy[0].fhat_to_img(f_hat).add_(1).mul_(0.5)
+    
+    @torch.no_grad()
+    def autoregressive_infer_inpainting(self, B: int, input_img_tokens: list, 
+                                       edit_mask: torch.Tensor, original_img: torch.Tensor = None,
+                                       g_seed=None, top_k=0, top_p=0.0, more_smooth=False):
+        """Inpainting inference for grayscale images"""
+        if g_seed is None: 
+            rng = None
+        else: 
+            self.rng.manual_seed(g_seed)
+            rng = self.rng
+        
+        # Use unconditional embedding for all samples
+        sos = cond_BD = self.class_emb.expand(B, -1)
+        
+        # Learned level embeddings and absolute positional embeddings
+        lvl_pos = self.lvl_embed(self.lvl_1L) + self.pos_1LC
+        next_token_map = sos.unsqueeze(1).expand(B, self.first_l, -1) + self.pos_start.expand(B, self.first_l, -1) + lvl_pos[:, :self.first_l]
+        
+        cur_L = 0
+        f_hat = sos.new_zeros(B, self.Cvae, self.patch_nums[-1], self.patch_nums[-1])
+        
+        for b in self.blocks: b.attn.kv_caching(True)
+        for si, pn in enumerate(self.patch_nums):
+            ratio = si / self.num_stages_minus_1
+            cur_L += pn*pn
+            
+            cond_BD_or_gss = self.shared_ada_lin(cond_BD)
+            x = next_token_map
+            for b in self.blocks:
+                x = b(x=x, cond_BD=cond_BD_or_gss, attn_bias=None)
+            logits_BlV = self.get_logits(x, cond_BD)
+            
+            # Sample new tokens (no CFG for unconditional)
+            idx_Bl = sample_with_top_k_top_p_(logits_BlV, rng=rng, top_k=top_k, top_p=top_p, num_samples=1)[:, :, 0]
+            
+            if not more_smooth:
+                h_BChw = self.vae_quant_proxy[0].embedding(idx_Bl)
+            else:
+                gum_t = max(0.27 * (1 - ratio * 0.95), 0.005)
+                h_BChw = gumbel_softmax_with_rng(logits_BlV.mul(1 + ratio), tau=gum_t, hard=False, dim=-1, rng=rng) @ self.vae_quant_proxy[0].embedding.weight.unsqueeze(0)
+            
+            h_BChw = h_BChw.transpose_(1, 2).reshape(B, self.Cvae, pn, pn)
+            
+            # KEY DIFFERENCE: Replace tokens based on mask
+            if edit_mask is not None and si < len(input_img_tokens):
+                gt_BChw = self.vae_quant_proxy[0].embedding(input_img_tokens[si]).transpose_(1, 2).reshape(B, self.Cvae, pn, pn)
+                h_BChw = self.replace_embedding_grayscale(edit_mask, h_BChw, gt_BChw, pn, pn)
+            
+            f_hat, next_token_map = self.vae_quant_proxy[0].get_next_autoregressive_input(si, len(self.patch_nums), f_hat, h_BChw)
+            
+            if si != self.num_stages_minus_1:
+                next_token_map = next_token_map.view(B, self.Cvae, -1).transpose(1, 2)
+                next_token_map = self.word_embed(next_token_map) + lvl_pos[:, cur_L:cur_L + self.patch_nums[si+1] ** 2]
+        
+        for b in self.blocks: b.attn.kv_caching(False)
+        
+        # Generate the inpainted image
+        inpainted_img = self.vae_proxy[0].fhat_to_img(f_hat).add_(1).mul_(0.5)
+
+        # Enforce exact preservation of unmasked regions
+        if edit_mask is not None and original_img is not None:
+            import torch.nn.functional as F
+            
+            # Create full-resolution mask for final image blending
+            full_mask = F.interpolate(
+                edit_mask.unsqueeze(0).unsqueeze(0).float(), 
+                size=inpainted_img.shape[-2:], 
+                mode='nearest'
+            ).squeeze()
+            
+            # Preserve original pixels in unmasked regions (where mask = 1)
+            # mask=1 means keep original, mask=0 means use inpainted
+            final_img = inpainted_img * (1 - full_mask) + original_img * full_mask
+            return final_img
+        
+        return inpainted_img
+
+    def replace_embedding_grayscale(self, edit_mask: torch.Tensor, h_BChw: torch.Tensor, 
+                                   gt_BChw: torch.Tensor, ph: int, pw: int) -> torch.Tensor:
+        """Replace embeddings based on mask for grayscale inpainting"""
+        import torch.nn.functional as F
+        
+        B = h_BChw.shape[0]
+        h, w = edit_mask.shape[-2:]
+        if edit_mask.ndim == 2:
+            edit_mask = edit_mask.unsqueeze(0).expand(B, h, w)
+
+        # Interpolate mask to current patch resolution using NEAREST to preserve exact boundaries
+        force_gt_B1hw = F.interpolate(
+            edit_mask.unsqueeze(1).to(dtype=torch.float, device=gt_BChw.device), 
+            size=(ph, pw), mode='nearest'  # Changed from 'bilinear' to 'nearest'
+        ).gt(0.5).int()
+        
+        # For very small patches, keep all ground truth
+        if ph * pw <= 3: 
+            force_gt_B1hw.fill_(1)
+        
+        return gt_BChw * force_gt_B1hw + h_BChw * (1 - force_gt_B1hw)
+
+    def get_inpainting_mask(self, patch_nums: list, y0: float, x0: float, 
+                        y1: float, x1: float, device) -> torch.Tensor:
+        """Create inpainting mask - 1 for keeping original, 0 for inpainting"""
+        ph, pw = patch_nums[-1], patch_nums[-1]
+        edit_mask = torch.zeros(ph, pw, device=device)
+        
+        # Calculate pixel coordinates
+        y0_px = int(round(y0 * ph))
+        x0_px = int(round(x0 * pw)) 
+        y1_px = int(round(y1 * ph))
+        x1_px = int(round(x1 * pw))
+        
+        # Debug print
+        print(f"Mask coordinates: y0={y0_px}, x0={x0_px}, y1={y1_px}, x1={x1_px}")
+        print(f"Patch size: {ph}x{pw}")
+        
+        # Set region to inpaint to 0, keep border as 1  
+        edit_mask[:, :] = 1  # Start with all 1s (keep everything)
+        edit_mask[y0_px:y1_px, x0_px:x1_px] = 0  # Set inpainting region to 0
+        
+        print(f"Mask sum: {edit_mask.sum().item()}/{edit_mask.numel()} (should be < total)")
+        return edit_mask

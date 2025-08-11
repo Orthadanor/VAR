@@ -45,7 +45,7 @@ def test_tokenization(log_dir, same_shape=True):
     # Load checkpoint with proper key handling
     # checkpoint_path = '/home/yuchenliu/VAR/local_output/vqvae_checkpoints_v128_z16_c64_b1/vqvae_final.pth'
     # checkpoint_path = '/home/yuchenliu/VAR/local_output/vqvae_checkpoints_v128_z16_c64_b1_lpips/vqvae_epoch_150.pth'
-    checkpoint_path = os.path.join(log_dir, 'vqvae_epoch_150.pth')
+    checkpoint_path = os.path.join(log_dir, 'vqvae_epoch_190.pth')
     
     if not os.path.exists(checkpoint_path):
         print(f"❌ Checkpoint not found: {checkpoint_path}")
@@ -116,7 +116,7 @@ def test_tokenization(log_dir, same_shape=True):
             
             # Create output directory for saving images
             # output_dir = "/home/yuchenliu/VAR/local_output/vqvae_checkpoints_v128_z16_c64_b1/recon_imgs"
-            output_dir = os.path.join(log_dir, "recon_imgs")
+            output_dir = os.path.join(log_dir, "recon_imgs_190pth")
             os.makedirs(output_dir, exist_ok=True)
             
             # Save original image first
@@ -243,6 +243,6 @@ if __name__ == '__main__':
     print(f"🔧 Using same_shape={same_shape} for reconstruction test\n")
     
     # Test tokenization with checkpoint
-    test_tokenization(log_dir="/home/yuchenliu/VAR/local_output/vqvae_checkpoints_v128_z16_c64_b1_lpips", same_shape=False)
+    test_tokenization(log_dir="/home/yuchenliu/VAR/local_output/vqvae_checkpoints_v128_z16_c64_b1_lpips", same_shape=same_shape)
     
     print("\nTest completed!")

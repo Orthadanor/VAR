@@ -112,7 +112,7 @@ def build_everything(args: arg_util.Args):
         )
     
     # vae_ckpt = 'vae_ch160v4096z32.pth'
-    vae_ckpt = 'vqvae_v128_z16_c64_b1.pth'
+    vae_ckpt = 'vqvae_epoch_190.pth'
     if dist.is_local_master():
         if not os.path.exists(vae_ckpt):
             print(f"❌ VQVAE checkpoint not found: {vae_ckpt}")
