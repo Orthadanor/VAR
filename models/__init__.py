@@ -8,7 +8,7 @@ from .vqvae import VQVAE
 def build_vae_var_grayscale(
     V=128, Cvae=16, ch=64, share_quant_resi=4,
     device='cuda', patch_nums=(1, 2, 4, 8),
-    depth=16, shared_aln=False, 
+    depth=16, num_heads=16, shared_aln=False, 
     init_adaln=0.5, init_adaln_gamma=1e-5, init_head=0.02, init_std=-1,
     **kwargs
 ):
@@ -27,7 +27,7 @@ def build_vae_var_grayscale(
     var_wo_ddp = VARGrayscale(
         vae_local=vae_local,
         num_classes=1,  # Single class for unconditional
-        depth=depth, embed_dim=1024, num_heads=16, 
+        depth=depth, embed_dim=1024, num_heads=num_heads, 
         drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
         norm_eps=1e-6, shared_aln=shared_aln, cond_drop_rate=1.0,  # Always unconditional
         patch_nums=patch_nums,
@@ -45,7 +45,7 @@ def build_vae_var(
     # VQVAE args
     V=4096, Cvae=32, ch=160, share_quant_resi=4,
     # VAR args
-    num_classes=1000, depth=16, shared_aln=False, attn_l2_norm=True,
+    num_classes=1000, depth=16, num_heads=16, shared_aln=False, attn_l2_norm=True,
     flash_if_available=True, fused_if_available=True,
     init_adaln=0.5, init_adaln_gamma=1e-5, init_head=0.02, init_std=-1,    # init_std < 0: automated
 ) -> Tuple[VQVAE, VAR]:
@@ -61,7 +61,7 @@ def build_vae_var(
     vae_local = VQVAE(vocab_size=V, z_channels=Cvae, ch=ch, test_mode=True, share_quant_resi=share_quant_resi, v_patch_nums=patch_nums).to(device)
     var_wo_ddp = VAR(
         vae_local=vae_local,
-        num_classes=num_classes, depth=depth, embed_dim=width, num_heads=heads, drop_rate=0., attn_drop_rate=0., drop_path_rate=dpr,
+        num_classes=num_classes, depth=depth, embed_dim=width, num_heads=num_heads, drop_rate=0., attn_drop_rate=0., drop_path_rate=dpr,
         norm_eps=1e-6, shared_aln=shared_aln, cond_drop_rate=0.1,
         attn_l2_norm=attn_l2_norm,
         patch_nums=patch_nums,

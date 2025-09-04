@@ -23,7 +23,8 @@ vae, var = build_vae_var_grayscale(
     share_quant_resi=4,
     device=device, 
     patch_nums=(1, 2, 4, 8),  # Match your training patch_nums
-    depth=16,        # VAR depth from your training
+    depth=8,        # VAR depth from your training
+    num_heads=8,
     shared_aln=False,
     # Optional: add these if needed for exact match
     # flash_if_available=True, 
@@ -41,6 +42,7 @@ vae, var = build_vae_var_grayscale(
 # Load your trained checkpoints
 vqvae_ckpt_path = '/home/yuchenliu/VAR/local_output/vqvae_checkpoints_v128_z16_c64_b1_lpips/vqvae_epoch_190.pth'
 var_ckpt_path = '/home/yuchenliu/VAR/local_output/var_custom_v128_z16_c64_b1_lpips/ar-ckpt-best.pth'
+var_ckpt_path = '/home/yuchenliu/VAR/local_output/var_custom_v128_z16_c64_lpips_d8_h8/ar-ckpt-best.pth'
 
 vqvae_checkpoint = torch.load(vqvae_ckpt_path, map_location='cpu')
 vae.load_state_dict(vqvae_checkpoint['model_state_dict'], strict=True)
@@ -71,7 +73,7 @@ print(f"\nGenerating {B} grayscale MRI samples...")
 
 with torch.inference_mode():
     # Load and preprocess a test MRI image (without autocast to avoid dtype issues)
-    test_image_path = "/home/yuchenliu/Dataset/IXI/train_val_test_split/test/mid_brain/IXI026-Guys-0696_t1_slice059.npy"
+    test_image_path = "/home/yuchenliu/Dataset/IXI/train_val_test_split/test/mid_brain/IXI012-HH-1211_t1_slice072.npy"
     
     # Load the numpy array
     original_img_np = np.load(test_image_path)
@@ -96,10 +98,16 @@ with torch.inference_mode():
     
     # Create inpainting mask - mask out center region for inpainting
     # Parameters: y0, x0 (top-left), y1, x1 (bottom-right) in normalized coordinates [0, 1]
+    # inpaint_mask = var.get_inpainting_mask(
+    #     var.patch_nums,
+    #     y0=0.5, x0=0.4,  # Top-left of region to inpaint
+    #     y1=0.9, x1=0.8,  # Bottom-right of region to inpaint  
+    #     device=device
+    # )
     inpaint_mask = var.get_inpainting_mask(
         var.patch_nums,
-        y0=0.5, x0=0.4,  # Top-left of region to inpaint
-        y1=0.9, x1=0.8,  # Bottom-right of region to inpaint  
+        y0=0.3, x0=0.3,  # Top-left of region to inpaint
+        y1=0.7, x1=0.7,  # Bottom-right of region to inpaint  
         device=device
     )
     print(f"Created inpainting mask with shape: {inpaint_mask.shape}")
@@ -137,7 +145,7 @@ with torch.inference_mode():
     
     # Create visualization
     fig, axes = plt.subplots(2, 2, figsize=(12, 12))
-    fig.suptitle('IXI002-Guys-0828_t1_slice074.npy', fontsize=20)
+    fig.suptitle('IXI012-HH-1211_t1_slice072.npy', fontsize=20)
     
     # Original image
     axes[0, 0].imshow(original_np, cmap='gray', vmin=0, vmax=1)

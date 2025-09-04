@@ -1,7 +1,8 @@
 """
-LPIPS perceptual loss adapted for grayscale images.
+LPIPS perceptual loss adapted for grayscale images and volume data.
 Stripped version of https://github.com/richzhang/PerceptualSimilarity/tree/master/models
 Modified to handle grayscale input by duplicating channels to RGB.
+Added volumetric mean loss calculation for processing multiple slices.
 """
 
 import torch
@@ -10,9 +11,11 @@ from torchvision import models
 import os
 
 class LPIPS(nn.Module):
-    # Learned perceptual metric for grayscale images
-    def __init__(self, lpips_path="/home/yuchenliu/VAR/checkpoints/vgg.pth", use_dropout=False):
+    # Learned perceptual metric for grayscale images and volumes
+    def __init__(self, lpips_path="/home/yuchenliu/VAR/checkpoints/vgg.pth", use_dropout=False, volume_mode=False):
         super().__init__()
+        self.volume_mode = volume_mode  # Flag to enable volume processing
+        
         # build models
         self.net = Vgg16(requires_grad=False)
         self.lins = nn.ModuleList([NetLinLayer(c, use_dropout=use_dropout) for c in [64, 128, 256, 512, 512]])  # c: vgg16 feature dimensions
@@ -66,51 +69,6 @@ class LPIPS(nn.Module):
                 print("Using random initialization")
         else:
             print(f"Checkpoint not found at {lpips_path}, using random initialization")
-        # if lpips_path and os.path.exists(lpips_path):
-        #     try:
-        #         print(f"Loading LPIPS weights from: {lpips_path}")
-        #         # Load with strict=True to match original implementation
-        #         self.load_state_dict(torch.load(lpips_path, map_location='cpu'), strict=True)
-        #         print("Successfully loaded LPIPS checkpoint with strict=True")
-                    
-        #     except Exception as e:
-        #         print(f"Failed to load checkpoint with strict=True: {e}")
-        #         print("Falling back to filtered loading...")
-                
-        #         # Fallback to the original filtered approach
-        #         try:
-        #             checkpoint = torch.load(lpips_path, map_location='cpu')
-                    
-        #             # Handle different checkpoint formats
-        #             if isinstance(checkpoint, dict):
-        #                 if 'state_dict' in checkpoint:
-        #                     state_dict = checkpoint['state_dict']
-        #                 elif 'model' in checkpoint:
-        #                     state_dict = checkpoint['model']
-        #                 else:
-        #                     state_dict = checkpoint
-        #             else:
-        #                 state_dict = checkpoint
-                    
-        #             # Filter to load only compatible layers
-        #             model_dict = self.state_dict()
-        #             filtered_dict = {}
-                    
-        #             for k, v in state_dict.items():
-        #                 if k in model_dict and model_dict[k].shape == v.shape:
-        #                     filtered_dict[k] = v
-                    
-        #             if filtered_dict:
-        #                 self.load_state_dict(filtered_dict, strict=False)
-        #                 print(f"Loaded {len(filtered_dict)} layers from checkpoint")
-        #             else:
-        #                 print("No compatible layers found in checkpoint, using random initialization")
-                        
-        #         except Exception as e2:
-        #             print(f"Fallback loading also failed: {e2}")
-        #             print("Using random initialization")
-        # else:
-        #     print(f"Checkpoint not found at {lpips_path}, using random initialization")
         
         # register helper tensors for VGG normalization
         self.register_buffer('shift', torch.tensor([-.030, -.088, -.188], dtype=torch.float32).view(1, 3, 1, 1).contiguous())
@@ -127,12 +85,35 @@ class LPIPS(nn.Module):
         else:
             raise ValueError(f"Expected 1 or 3 channels, got {x.shape[1]}")
     
+    def volume_to_rgb(self, x):
+        """
+        Convert volume [B, num_slices, H, W] to RGB by processing each slice individually
+        Returns: [B * num_slices, 3, H, W]
+        """
+        B, num_slices, H, W = x.shape
+
+        x_reshaped = x.view(B * num_slices, 1, H, W)
+        x_rgb = self.grayscale_to_rgb(x_reshaped) # Convert each slice to RGB: [B * num_slices, 3, H, W]
+
+        return x_rgb
+    
     def forward(self, inp, rec):
         """
-        :param inp: grayscale image for calculating LPIPS loss, [-1, 1], shape [B, 1, H, W]
-        :param rec: grayscale image for calculating LPIPS loss, [-1, 1], shape [B, 1, H, W]
+        :param inp: grayscale image or volume for calculating LPIPS loss, [-1, 1]
+                   shape [B, 1, H, W] for grayscale or [B, num_slices, H, W] for volume
+        :param rec: grayscale image or volume for calculating LPIPS loss, [-1, 1]
+                   shape [B, 1, H, W] for grayscale or [B, num_slices, H, W] for volume
         :return: lpips loss (scalar)
         """
+        if self.volume_mode and inp.shape[1] > 1:
+            # Volume mode: process each slice individually
+            return self._forward_volume(inp, rec)
+        else:
+            # Standard grayscale mode
+            return self._forward_grayscale(inp, rec)
+    
+    def _forward_grayscale(self, inp, rec):
+        """Standard grayscale LPIPS forward pass"""
         B = inp.shape[0]
         
         # Convert grayscale to RGB by duplicating channels
@@ -149,6 +130,28 @@ class LPIPS(nn.Module):
         diff = 0.
         for inp_and_rec, lin in zip(inp_and_recs, self.lins):
             diff += lin.model((normalize_tensor(inp_and_rec[:B]) - normalize_tensor(inp_and_rec[B:])).square_()).mean()
+        return diff
+    
+    def _forward_volume(self, inp, rec):
+        """Volume LPIPS forward pass - processes each slice individually"""
+        B, num_slices, H, W = inp.shape
+        
+        # Convert volumes to RGB format: [B * num_slices, 3, H, W]
+        inp_rgb = self.volume_to_rgb(inp)
+        rec_rgb = self.volume_to_rgb(rec)
+        
+        # Concatenate and apply VGG normalization
+        inp_and_recs = torch.cat((inp_rgb, rec_rgb), dim=0).sub(self.shift).mul_(self.scale_inv)
+        
+        # Extract features
+        inp_and_recs = self.net(inp_and_recs)   # inp_and_recs: List[Tensor], len(inp_and_recs) == 5
+        
+        # Compute perceptual difference for all slices
+        diff = 0.
+        total_slices = B * num_slices
+        for inp_and_rec, lin in zip(inp_and_recs, self.lins):
+            diff += lin.model((normalize_tensor(inp_and_rec[:total_slices]) - normalize_tensor(inp_and_rec[total_slices:])).square_()).mean()
+        
         return diff
 
 
@@ -286,5 +289,56 @@ def test_lpips_grayscale():
     print(f"Gradient computed successfully, grad norm: {rec.grad.norm().item():.6f}")
 
 
+def test_lpips_volume():
+    """Test function for volume LPIPS"""
+    print("Testing LPIPS for volume data...")
+    
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    
+    # Create test volume data: [B, num_slices, H, W]
+    B, num_slices, H, W = 2, 10, 128, 128
+    inp_vol = torch.randn(B, num_slices, H, W).to(device)  # Volume input
+    rec_vol = torch.randn(B, num_slices, H, W).to(device)  # Volume reconstruction
+    
+    # Initialize LPIPS with volume mode
+    lpips_vol = LPIPS(volume_mode=True).to(device)
+    
+    # Test forward pass
+    with torch.no_grad():
+        loss = lpips_vol(inp_vol, rec_vol)
+    
+    print(f"Volume input shape: {inp_vol.shape}")
+    print(f"Volume LPIPS loss: {loss.item():.6f}")
+    
+    # Test with identical volumes (should be close to 0)
+    with torch.no_grad():
+        identical_loss = lpips_vol(inp_vol, inp_vol)
+    print(f"Volume LPIPS loss for identical volumes: {identical_loss.item():.6f}")
+    
+    # Test gradient computation
+    rec_vol.requires_grad_(True)
+    loss = lpips_vol(inp_vol, rec_vol)
+    loss.backward()
+    print(f"Volume gradient computed successfully, grad norm: {rec_vol.grad.norm().item():.6f}")
+    
+    # Compare with standard grayscale mode
+    print("\nComparing with standard grayscale mode...")
+    lpips_std = LPIPS(volume_mode=False).to(device)
+    
+    # Take first slice for comparison
+    inp_slice = inp_vol[:, 0:1, :, :]  # [B, 1, H, W]
+    rec_slice = rec_vol[:, 0:1, :, :]  # [B, 1, H, W]
+    
+    with torch.no_grad():
+        std_loss = lpips_std(inp_slice, rec_slice)
+        vol_loss_single = lpips_vol(inp_slice, rec_slice)  # Should work the same for single slice
+    
+    print(f"Standard LPIPS (single slice): {std_loss.item():.6f}")
+    print(f"Volume LPIPS (single slice): {vol_loss_single.item():.6f}")
+    print(f"Difference: {abs(std_loss.item() - vol_loss_single.item()):.8f}")
+
+
 if __name__ == '__main__':
     test_lpips_grayscale()
+    print("\n" + "="*50 + "\n")
+    test_lpips_volume()

@@ -16,6 +16,18 @@ def nonlinearity(x):
 
 
 def Normalize(in_channels, num_groups=32):
+    # Ensure num_groups is not larger than in_channels and in_channels is divisible by num_groups
+    if num_groups > in_channels:
+        num_groups = in_channels
+    elif in_channels % num_groups != 0:
+        # Find the largest divisor of in_channels that is <= 32
+        for i in range(min(32, in_channels), 0, -1):
+            if in_channels % i == 0:
+                num_groups = i
+                break
+        else:
+            num_groups = 1  # Fallback to 1 group if no suitable divisor found
+    
     return torch.nn.GroupNorm(num_groups=num_groups, num_channels=in_channels, eps=1e-6, affine=True)
 
 

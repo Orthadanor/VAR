@@ -31,6 +31,7 @@ class Args(Tap):
     # VAR
     tfast: int = 0      # torch.compile VAR; =0: not compile; 1: compile with 'reduce-overhead'; 2: compile with 'max-autotune'
     depth: int = 16     # VAR depth
+    num_heads: int = 16 # VAR number of attention heads
     # VAR initialization
     ini: float = -1     # -1: automated model parameter initialization
     hd: float = 0.02    # head.w *= hd

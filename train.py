@@ -96,7 +96,7 @@ def build_everything(args: arg_util.Args):
         vae_local, var_wo_ddp = build_vae_var_grayscale(
             V=128, Cvae=16, ch=64, share_quant_resi=4,  # Updated to match your trained VQVAE
             device=dist.get_device(), patch_nums=args.patch_nums,  # Use args.patch_nums from command line
-            depth=args.depth, shared_aln=args.saln,
+            depth=args.depth, num_heads=args.num_heads, shared_aln=args.saln,
             flash_if_available=args.fuse, fused_if_available=args.fuse,
             init_adaln=args.aln, init_adaln_gamma=args.alng, 
             init_head=args.hd, init_std=args.ini,
@@ -106,7 +106,7 @@ def build_everything(args: arg_util.Args):
         vae_local, var_wo_ddp = build_vae_var(
             V=4096, Cvae=32, ch=160, share_quant_resi=4,
             device=dist.get_device(), patch_nums=args.patch_nums,
-            num_classes=num_classes, depth=args.depth, shared_aln=args.saln, attn_l2_norm=args.anorm,
+            num_classes=num_classes, depth=args.depth, num_heads=args.num_heads, shared_aln=args.saln, attn_l2_norm=args.anorm,
             flash_if_available=args.fuse, fused_if_available=args.fuse,
             init_adaln=args.aln, init_adaln_gamma=args.alng, init_head=args.hd, init_std=args.ini,
         )
@@ -145,6 +145,7 @@ def build_everything(args: arg_util.Args):
     # Distributed Data Parallel (DDP) Wrapper
     
     print(f'[INIT] VAR model = {var_wo_ddp}\n\n')
+    print(f'[INIT] Model config: depth={args.depth}, num_heads={args.num_heads}, patch_nums={args.patch_nums}')
     count_p = lambda m: f'{sum(p.numel() for p in m.parameters())/1e6:.2f}'
     print(f'[INIT][#para] ' + ', '.join([f'{k}={count_p(m)}' for k, m in (('VAE', vae_local), ('VAE.enc', vae_local.encoder), ('VAE.dec', vae_local.decoder), ('VAE.quant', vae_local.quantize))]))
     print(f'[INIT][#para] ' + ', '.join([f'{k}={count_p(m)}' for k, m in (('VAR', var_wo_ddp),)]) + '\n\n')
@@ -257,8 +258,7 @@ def main_training():
             best_val_acc_mean, best_val_acc_tail = max(best_val_acc_mean, val_acc_mean), max(best_val_acc_tail, val_acc_tail)
             AR_ep_loss.update(vL_mean=val_loss_mean, vL_tail=val_loss_tail, vacc_mean=val_acc_mean, vacc_tail=val_acc_tail)
             args.vL_mean, args.vL_tail, args.vacc_mean, args.vacc_tail = val_loss_mean, val_loss_tail, val_acc_mean, val_acc_tail
-            print(f' [*] [ep{ep}]  (val {tot})  Lm: {L_mean:.4f}, Lt: {L_tail:.4f}, Acc m&t: {acc_mean:.2f} {acc_tail:.2f},  Val cost: {cost:.2f}s')
-            
+            print(f' [*] [ep{ep}]  (val {tot})  Lm: {val_loss_mean:.4f}, Lt: {val_loss_tail:.4f}, Acc m&t: {val_acc_mean:.2f} {val_acc_tail:.2f},  Val cost: {cost:.2f}s')            
             if dist.is_local_master():
                 local_out_ckpt = os.path.join(args.local_out_dir_path, 'ar-ckpt-last.pth')
                 local_out_ckpt_best = os.path.join(args.local_out_dir_path, 'ar-ckpt-best.pth')

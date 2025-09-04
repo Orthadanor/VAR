@@ -4,6 +4,8 @@ import os
 import numpy as np
 from PIL import Image
 import torch.distributed as dist
+import argparse
+import json
 sys.path.append('/home/yuchenliu/VAR')  # Add VAR to path
 
 from models.vqvae_grayscale import VQVAEGrayscale
@@ -24,28 +26,34 @@ def init_distributed():
             rank=0,
             world_size=1
         )
-        print("✅ Initialized distributed training for testing")
+        print("Initialized distributed training for testing")
 
 def cleanup_distributed():
     """Cleanup distributed training"""
     if dist.is_initialized():
         dist.destroy_process_group()
-        print("🧹 Cleaned up distributed training")
+        print("Cleaned up distributed training")
 
 def test_tokenization(log_dir, same_shape=True):
-    # Create model with the same parameters as your training
+    # Load model configuration
+    config_path = os.path.join(log_dir, "model_config.json")
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"Model configuration file not found: {config_path}")
+
+    with open(config_path, "r") as f:
+        model_config = json.load(f)
+
+    # Build the VQVAE model using loaded configuration
     vqvae = VQVAEGrayscale(
-        vocab_size=128,  # Changed from 4096 to match your training
-        z_channels=16,   # Changed from 32 to match your training  
-        ch=64,          # Changed from 160 to match your training
+        vocab_size=model_config["vocab_size"],
+        z_channels=model_config["z_channels"],
+        ch=model_config["ch"],
         test_mode=False,
-        v_patch_nums=(1, 2, 4, 8)  # Add your patch configuration
+        v_patch_nums=tuple(model_config["v_patch_nums"])
     ).cuda()
     
     # Load checkpoint with proper key handling
-    # checkpoint_path = '/home/yuchenliu/VAR/local_output/vqvae_checkpoints_v128_z16_c64_b1/vqvae_final.pth'
-    # checkpoint_path = '/home/yuchenliu/VAR/local_output/vqvae_checkpoints_v128_z16_c64_b1_lpips/vqvae_epoch_150.pth'
-    checkpoint_path = os.path.join(log_dir, 'vqvae_epoch_190.pth')
+    checkpoint_path = os.path.join(log_dir, 'vqvae_best.pth')
     
     if not os.path.exists(checkpoint_path):
         print(f"❌ Checkpoint not found: {checkpoint_path}")
@@ -95,12 +103,12 @@ def test_tokenization(log_dir, same_shape=True):
             
             # Test quantization
             quant_input = vqvae.quant_conv(encoded)
-            print(f"🔧 Quant input shape: {quant_input.shape}")
+            print(f" Quant input shape: {quant_input.shape}")
             
             # Test multi-scale tokenization
             gt_idx_Bl = vqvae.img_to_idxBl(image)
             
-            print(f"\n🏷️  Tokenization Results:")
+            print(f"\n Tokenization Results:")
             print(f"    Number of scales: {len(gt_idx_Bl)}")
             
             total_tokens = 0
@@ -126,12 +134,12 @@ def test_tokenization(log_dir, same_shape=True):
             original_pil = Image.fromarray(original_img_normalized, mode='L')
             original_path = os.path.join(output_dir, "original_image.png")
             original_pil.save(original_path)
-            print(f"💾 Original image saved: {original_path}")
+            print(f"Original image saved: {original_path}")
             
             # Test reconstruction - Show all reconstructed images
             if same_shape:
                 reconstructed_list = vqvae.idxBl_to_img(gt_idx_Bl, True)
-                print(f"\n🔄 Reconstruction test (same_shape=True):")
+                print(f"\n Reconstruction test (same_shape=True):")
                 print(f"    Number of reconstructed images: {len(reconstructed_list)}")
                 
                 for i, reconstructed in enumerate(reconstructed_list):
@@ -149,10 +157,10 @@ def test_tokenization(log_dir, same_shape=True):
                     recon_pil = Image.fromarray(recon_img_normalized, mode='L')
                     recon_path = os.path.join(output_dir, f"reconstruction_scale_{i}.png")
                     recon_pil.save(recon_path)
-                    print(f"      💾 Saved: {recon_path}")
+                    print(f"      Saved: {recon_path}")
             else:
                 reconstructed_list = vqvae.idxBl_to_img(gt_idx_Bl, False)
-                print(f"\n🔄 Reconstruction test (same_shape=False - native scales):")
+                print(f"\n Reconstruction test (same_shape=False - native scales):")
                 print(f"    Number of reconstructed images: {len(reconstructed_list)}")
                 
                 for i, reconstructed in enumerate(reconstructed_list):
@@ -170,16 +178,16 @@ def test_tokenization(log_dir, same_shape=True):
                     recon_pil = Image.fromarray(recon_img_normalized, mode='L')
                     recon_path = os.path.join(output_dir, f"reconstruction_scale_{i}_native_{scale_size}x{scale_size}.png")
                     recon_pil.save(recon_path)
-                    print(f"      💾 Saved: {recon_path}")
+                    print(f"      Saved: {recon_path}")
             
             # Also test the standard forward pass for comparison
-            print(f"\n🔄 Standard forward pass (for comparison):")
+            print(f"\n Standard forward pass (for comparison):")
             
             # Initialize distributed training only for standard forward pass
             if not dist.is_initialized():
                 init_distributed()
             
-            reconstructed_std, usages, vq_loss, commitment_loss, codebook_loss = vqvae(image, ret_usages=True)
+            reconstructed_std, usages, vq_loss = vqvae(image, ret_usages=True)
             recon_loss_std = torch.nn.functional.l1_loss(reconstructed_std, image)
             print(f"    Standard reconstruction shape: {reconstructed_std.shape}")
             print(f"    Standard reconstruction L1 loss: {recon_loss_std.item():.6f}")
@@ -194,9 +202,9 @@ def test_tokenization(log_dir, same_shape=True):
             std_recon_pil = Image.fromarray(std_recon_img_normalized, mode='L')
             std_recon_path = os.path.join(output_dir, "reconstruction_standard.png")
             std_recon_pil.save(std_recon_path)
-            print(f"    💾 Standard reconstruction saved: {std_recon_path}")
+            print(f"     Standard reconstruction saved: {std_recon_path}")
             
-            print(f"\n📁 All images saved to: {output_dir}")
+            print(f"\n All images saved to: {output_dir}")
             
     except Exception as e:
         print(f"❌ Error during tokenization: {e}")
@@ -208,41 +216,16 @@ def test_tokenization(log_dir, same_shape=True):
             cleanup_distributed()
         return
 
-def test_model_properties():
-    """Test model properties and architecture"""
-    print("🏗️  Testing model architecture...")
-    
-    vqvae = VQVAEGrayscale(
-        vocab_size=128,
-        z_channels=16,
-        ch=64,
-        test_mode=False,
-        v_patch_nums=(1, 2, 4, 8)
-    )
-    
-    print(f"Model properties:")
-    print(f"    Vocab size: {vqvae.vocab_size}")
-    print(f"    Z channels: {vqvae.Cvae}")
-    print(f"    Downsample factor: {vqvae.downsample}")
-    print(f"    Patch numbers: {vqvae.quantize.v_patch_nums}")
-    
-    total_params = sum(p.numel() for p in vqvae.parameters())
-    trainable_params = sum(p.numel() for p in vqvae.parameters() if p.requires_grad)
-    print(f"    Total parameters: {total_params/1e6:.2f}M")
-    print(f"    Trainable parameters: {trainable_params/1e6:.2f}M")
-
 if __name__ == '__main__':
     print("Starting VQVAE Tokenization Test\n")
     
-    # Test model architecture first
-    test_model_properties()
-    print()
-    
-    # Set whether to use same_shape reconstruction
-    same_shape = True  # Change this to True for same_shape reconstruction, False for native scales
-    print(f"🔧 Using same_shape={same_shape} for reconstruction test\n")
+    # Add argument parsing
+    parser = argparse.ArgumentParser(description="Test VQVAE Tokenization")
+    parser.add_argument('--log_dir', type=str, required=True, help='Path to the log directory containing model_config.json')
+    parser.add_argument('--same_shape', action='store_true', help='Use same_shape reconstruction')
+    args = parser.parse_args()
     
     # Test tokenization with checkpoint
-    test_tokenization(log_dir="/home/yuchenliu/VAR/local_output/vqvae_checkpoints_v128_z16_c64_b1_lpips", same_shape=same_shape)
+    test_tokenization(log_dir=args.log_dir, same_shape=args.same_shape)
     
     print("\nTest completed!")

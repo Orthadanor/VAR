@@ -9,14 +9,14 @@ def plot_all_losses(log_dir):
     """
 
     file_configs = [
-        ("train_total_loss.csv", "Train Total Loss", "red",  "-", None),
-        ("val_total_loss.csv",   "Val Total Loss",   "red",  "--", "^"),
-        ("train_recon_loss.csv", "Train Recon Loss", "blue", "-", None),
-        ("val_recon_loss.csv",   "Val Recon Loss",   "blue", "--", "^"),
-        ("train_vq_loss.csv",    "Train VQ Loss",    "green","-", None),
-        ("val_vq_loss.csv",      "Val VQ Loss",      "green","--", "^"),
-        ("train_lpips_loss.csv", "Train LPIPS Loss", "orange", "-", None),
-        ("val_lpips_loss.csv",   "Val LPIPS Loss",   "orange", "--", "^"),
+        ("l_tail.csv", "Loss Tail (train)", "red",  "-", None),
+        ("vl_tail.csv",   "Loss Tail (val)",   "red",  "--", "^"),
+        ("l_mean.csv", "Loss Mean (train)", "blue", "-", None),
+        ("vl_mean.csv",   "Loss Mean (val)",   "blue", "--", "^"),
+        # ("train_vq_loss.csv",    "Train VQ Loss",    "green","-", None),
+        # ("val_vq_loss.csv",      "Val VQ Loss",      "green","--", "^"),
+        # ("train_lpips_loss.csv", "Train LPIPS Loss", "orange", "-", None),
+        # ("val_lpips_loss.csv",   "Val LPIPS Loss",   "orange", "--", "^"),
     ]
     
     # plt.figure(figsize=(12, 6))
@@ -68,7 +68,7 @@ def plot_all_losses(log_dir):
 
     plt.figure(figsize=(6, 8))
 
-    for filename, label, color, linestyle, marker in compound_file_configs:
+    for filename, label, color, linestyle, marker in file_configs:
         path = os.path.join(log_dir, filename)
         if not os.path.exists(path):
             print(f"[Warning] File not found: {path}")
@@ -76,26 +76,34 @@ def plot_all_losses(log_dir):
 
         df = pd.read_csv(path)
         df['Epoch'] = range(1, len(df) + 1)
-        plt.plot(df['Epoch'], df['Value'], label=label, color=color,
-                 linestyle=linestyle, marker=marker, linewidth=2, markersize=5)
+        
+        # For vl_tail.csv and vl_mean.csv, plot all data points but scale x-axis by 10
+        if filename in ["vl_tail.csv", "vl_mean.csv"]:
+            # Plot all data points but scale the x-axis by 10
+            df['Epoch'] = [i * 10 for i in range(1, len(df) + 1)]
+            plt.plot(df['Epoch'], df['Value'], label=label, color=color,
+                     linestyle=linestyle, marker=marker, linewidth=2, markersize=5)
+        else:
+            plt.plot(df['Epoch'], df['Value'], label=label, color=color,
+                     linestyle=linestyle, marker=marker, linewidth=2, markersize=5)
 
     plt.xlabel("Epoch", fontsize=18)
     plt.ylabel("Loss", fontsize=18)
-    plt.title("VQ-VAE Compound Losses", fontsize=20)
-    plt.ylim(0, 0.70)
+    plt.title("Cross Entropy Loss", fontsize=20)
+    # plt.ylim(0, 0.70)
     plt.grid(True)
     plt.legend(fontsize=12, loc='upper right')
     plt.tick_params(axis='both', which='major', labelsize=14)
     plt.tight_layout()
 
     # Save plot
-    save_path = os.path.join(log_dir, "compound_losses.png")
+    save_path = os.path.join(log_dir, "Cross Entropy Loss.png")
     plt.savefig(save_path)
     print(f"Saved plot to {save_path}")
     plt.close()
 
 def main():
-    log_directory = "/home/yuchenliu/VAR/local_output/vqvae_checkpoints_v128_z16_c64_b1_lpips/multiscale_vqvae_loss"
+    log_directory = "/home/yuchenliu/VAR/local_output/var_custom_v128_z16_c64_lpips_d8_h8/var_loss"
     plot_all_losses(log_directory)
 
 if __name__ == "__main__":

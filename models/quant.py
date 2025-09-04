@@ -62,6 +62,7 @@ class VectorQuantizer2(nn.Module):
         with torch.cuda.amp.autocast(enabled=False):
             mean_vq_loss: torch.Tensor = 0.0
             vocab_hit_V = torch.zeros(self.vocab_size, dtype=torch.float, device=f_BChw.device)
+            current_batch_hits = []  # Track hit counts per scale for usage calculation
             SN = len(self.v_patch_nums)
             for si, pn in enumerate(self.v_patch_nums): # from small to large
                 # find the nearest embedding
@@ -76,6 +77,7 @@ class VectorQuantizer2(nn.Module):
                     idx_N = torch.argmin(d_no_grad, dim=1)
                 
                 hit_V = idx_N.bincount(minlength=self.vocab_size).float()
+                current_batch_hits.append(hit_V.clone())  # Store current scale hit counts
                 if self.training:
                     if dist.initialized(): handler = tdist.all_reduce(hit_V, async_op=True)
                 
@@ -98,10 +100,22 @@ class VectorQuantizer2(nn.Module):
             mean_vq_loss *= 1. / SN
             f_hat = (f_hat.data - f_no_grad).add_(f_BChw)
         
-        margin = tdist.get_world_size() * (f_BChw.numel() / f_BChw.shape[1]) / self.vocab_size * 0.08
+        # Use world size if distributed training is initialized, otherwise use 1
+        world_size = tdist.get_world_size() if dist.initialized() else 1
+        margin = world_size * (f_BChw.numel() / f_BChw.shape[1]) / self.vocab_size * 0.08
         # margin = pn*pn / 100
-        if ret_usages: usages = [(self.ema_vocab_hit_SV[si] >= margin).float().mean().item() * 100 for si, pn in enumerate(self.v_patch_nums)]
-        else: usages = None
+        # if ret_usages: usages = [(self.ema_vocab_hit_SV[si] >= margin).float().mean().item() * 100 for si, pn in enumerate(self.v_patch_nums)]
+        # else: usages = None
+        if ret_usages: 
+            # Simple usage calculation: percentage of unique tokens used in each scale
+            usages = []
+            for si, hit_counts in enumerate(current_batch_hits):
+                # Count how many unique tokens were used (hit_counts > 0)
+                unique_tokens_used = (hit_counts > 0).sum().item()
+                usage_percentage = (unique_tokens_used / self.vocab_size) * 100
+                usages.append(usage_percentage)
+        else: 
+            usages = None
         return f_hat, usages, mean_vq_loss
     # ===================== `forward` is only used in VAE training =====================
     
