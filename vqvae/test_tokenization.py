@@ -9,7 +9,7 @@ import json
 sys.path.append('/home/yuchenliu/VAR')  # Add VAR to path
 
 from models.vqvae_grayscale import VQVAEGrayscale
-from utils.data_mri import build_mri_dataset_grayscale
+from utils.data_mri import build_ixi_2d
 
 def init_distributed():
     """Initialize distributed training for single GPU"""
@@ -76,7 +76,7 @@ def test_tokenization(log_dir, same_shape=True):
     
     # Test with MRI data using same parameters as training
     try:
-        num_classes, train_set, val_set = build_mri_dataset_grayscale(
+        num_classes, train_set, val_set = build_ixi_2d(
             data_path='/home/yuchenliu/Dataset/IXI/t1_np_masked_128_unconditional', 
             final_reso=128,  # Changed from 256 to match your training
             hflip=False

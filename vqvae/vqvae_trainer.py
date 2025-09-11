@@ -11,9 +11,9 @@ from contextlib import nullcontext
 from functools import partial
 from typing import List, Optional, Tuple, Dict, Any
 
-from lpips_grayscale import LPIPS
+from vqvae.lpips_grayscale import LPIPS
 from models.vqvae_grayscale import VQVAEGrayscale
-from utils.data_mri import braTS2d
+# from utils.data_mri import braTS2d
 from torch.utils.tensorboard import SummaryWriter
 import json
 from datetime import datetime

@@ -20,6 +20,7 @@ local_output*
 # *.ipynb
 checkpoints/
 results/
+generated_samples/
 
 generated_mri_samples.png
 check_npy_format.py

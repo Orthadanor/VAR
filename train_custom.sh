@@ -1,7 +1,7 @@
 # VQVAE Training
-export CUDA_VISIBLE_DEVICES=7,9
+export CUDA_VISIBLE_DEVICES=2,3
 
-python vqvae/train_vqvae_vaex_style.py \
+python train_vqvae.py \
     --data_path /home/yuchenliu/Dataset/IXI/train_val_test_split_single_slice \
     --batch_size 64 \
     --epochs 100 \
@@ -12,7 +12,7 @@ python vqvae/train_vqvae_vaex_style.py \
     --lr 1e-4 \
     --sche cos \
     --warmup_epochs 5 \
-    --save_dir ./local_output/vqvae_ixi_v128_z8_ch8
+    --save_dir ./local_output/vqvae_test_if_still_works_ixi
 
 ################## VQVAE for 3D #########################
 # python vqvae/train_vqvae_vol.py \
@@ -31,7 +31,7 @@ python vqvae/train_vqvae_vaex_style.py \
 
 ########## OLD VERSION VQVAE TRAINING ###################
 # python train_vqvae_multiscale.py \
-#     --data_path /home/yuchenliu/Dataset/IXI/train_val_test_split \
+#     --data_path /home/yuchenliu/Dataset/IXI/train_val_test_split_single_slice \
 #     --batch_size 64 \
 #     --epochs 200 \
 #     --final_reso 128 \
@@ -40,7 +40,7 @@ python vqvae/train_vqvae_vaex_style.py \
 #     --ch 64 \
 #     --lr 1e-4 \
 #     --val_freq 20 \
-#     --save_dir ./local_output/vqvae_checkpoints_v128_z16_c64_b1_lpips
+#     --save_dir ./local_output/vqvae_test_if_still_works_ixi
 
 # # Convert VQVAE checkpoint format for VAR training
 # python convert_vqvae_checkpoint.py

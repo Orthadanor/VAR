@@ -18,13 +18,13 @@ import argparse
 from datetime import datetime
 import json
 
-from vqvae_trainer import VQVAETrainer
+from vqvae.vqvae_trainer import VQVAETrainer
 # from tensorboard_logger import TensorboardLogger, DistLogger
 # from metric_logger import MetricLogger, SmoothedValue
 # from checkpoint_saver import CheckpointSaver
-from misc import *
+from vqvae.misc import *
 from models.vqvae_grayscale import VQVAEGrayscale
-from utils.data_mri import braTS2d
+from utils.data_mri import build_ixi_2d, build_braTS2d
 
 def time_str(fmt: str = "%m%d_%H%M") -> str:
     """Get current time string"""
@@ -91,12 +91,12 @@ def build_things_from_args(args):
     
     # Build data loaders
     print(f'[build data] ...\n')
-    # num_classes, train_set, val_set = build_mri_dataset_grayscale(
+    # num_classes, train_set, val_set = build_ixi_2d(
     #     data_path=args.data_path,
     #     final_reso=args.final_reso,
     #     hflip=args.hflip
     # )
-    num_classes, train_set, val_set = braTS2d(
+    num_classes, train_set, val_set = build_braTS2d(
         data_path=args.data_path,
         crop_shape=(128, 128),
         train_split=0.95
