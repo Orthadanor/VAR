@@ -37,7 +37,8 @@ class VQVAETrainer:
         zero: bool = False,
         compile_model: bool = False
     ):
-        self.model = model.to(device)
+        # If model is DDP, get the underlying module for optimizer and loss
+        self.model = model
         self.device = device
         self.tb_writer = tb_writer
         self.grad_clip = grad_clip
@@ -46,31 +47,35 @@ class VQVAETrainer:
         self.bf16 = bf16
         self.zero = zero
         self.compile_model = compile_model
-        
+
         # Loss weights
         self.codebook_weight = codebook_weight
         self.perceptual_weight = perceptual_weight
-        
-        # Optimizer setup matching VAR training
+
+        # Optimizer setup: use .module if model is DDP
+        model_for_optim = self.model.module if hasattr(self.model, "module") else self.model
         self.optimizer = optim.AdamW(
-            self.model.parameters(),
+            model_for_optim.parameters(),
             lr=lr,
             betas=(beta1, beta2),
             weight_decay=weight_decay,
             fused=True
         )
-        
+
         # Loss functions
         self.reconstruction_loss = nn.L1Loss()
         self.perceptual_loss = LPIPS().to(device).eval()
-        
-        # Compile model if requested
+
+        # Compile model if requested (only on underlying module)
         if compile_model:
-            self.model = torch.compile(self.model)
-        
+            if hasattr(self.model, "module"):
+                self.model.module = torch.compile(self.model.module)
+            else:
+                self.model = torch.compile(self.model)
+
         # Gradient accumulation counter
         self.grad_accu_counter = 0
-        
+
         # Speed tracking
         self.speed_ls = deque(maxlen=128)
         self.last_t_perf = time.perf_counter()
@@ -182,10 +187,11 @@ class VQVAETrainer:
         # Unpack batch
         x, _ = batch  # x: [B, 1, H, W], _: class labels (unused)
         x = x.to(self.device, non_blocking=True)
-        
+
         # Forward pass
         with maybe_record_function('VQVAE_forward'):
             # Ensure model is in training mode
+            # For DDP, call .module if needed for custom methods, but forward works on DDP
             reconstructed, usages, vq_loss = self.model(x, ret_usages=True)
         
         # Reconstruction loss
@@ -211,7 +217,7 @@ class VQVAETrainer:
         
         # Logging
         # if metric_lg and (step == 0 or step in getattr(metric_lg, 'log_iters', set())):
-        if metric_lg and (step == 0 or step % 10 == 0):
+        if metric_lg and (step == 0 or step % args.log_freq == 0):
 
             metric_lg.update(
                 Recon=recon_loss.item(),
@@ -240,8 +246,8 @@ class VQVAETrainer:
                                **{f'scale_{i}': usage})
         
         # Debug: Print first few steps to check if values are changing
-        if step < 5:
-            print(f"[DEBUG step {step}] recon: {recon_loss.item():.6f}, vq: {vq_loss.item():.6f}, perc: {p_loss.item():.6f}, total: {total_loss.item():.6f}")
+        # if step < 5:
+        #     print(f"[DEBUG step {step}] recon: {recon_loss.item():.6f}, vq: {vq_loss.item():.6f}, perc: {p_loss.item():.6f}, total: {total_loss.item():.6f}")
         
         return {
             'total_loss': total_loss.item(),
@@ -258,17 +264,17 @@ class VQVAETrainer:
         with torch.no_grad():
             x, _ = batch
             x = x.to(self.device, non_blocking=True)
-            
+
             reconstructed, usages, vq_loss = self.model(x, ret_usages=True)
             recon_loss = self.reconstruction_loss(reconstructed, x)
-            
+
             # Perceptual loss for validation
             x_normalized = 2.0 * x - 1.0
             reconstructed_normalized = 2.0 * reconstructed - 1.0
             p_loss = self.perceptual_loss(x_normalized, reconstructed_normalized)
-            
+
             total_loss = recon_loss + self.codebook_weight * vq_loss + self.perceptual_weight * p_loss
-            
+
         return {
             'val_total_loss': total_loss.item(),
             'val_recon_loss': recon_loss.item(),

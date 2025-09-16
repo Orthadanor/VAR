@@ -1,18 +1,19 @@
 # VQVAE Training
-export CUDA_VISIBLE_DEVICES=2,3
+export CUDA_VISIBLE_DEVICES=5
 
-python train_vqvae.py \
-    --data_path /home/yuchenliu/Dataset/IXI/train_val_test_split_single_slice \
-    --batch_size 64 \
-    --epochs 100 \
+torchrun --nproc_per_node=1 train_vqvae.py \
+    --data_path ../Dataset/ASNR-MICCAI-BraTS2023-Local-Synthesis-Challenge-Training \
+    --batch_size 128 \
+    --epochs 250 \
     --final_reso 128 \
-    --vocab_size 128 \
-    --z_channels 8 \
-    --ch 8 \
+    --vocab_size 256 \
+    --z_channels 16 \
+    --ch 64 \
     --lr 1e-4 \
     --sche cos \
     --warmup_epochs 5 \
-    --save_dir ./local_output/vqvae_test_if_still_works_ixi
+    --log_freq 10 \
+    --save_dir ./local_output/vqvae_brats2d_v256_z16_c64_lpips
 
 ################## VQVAE for 3D #########################
 # python vqvae/train_vqvae_vol.py \

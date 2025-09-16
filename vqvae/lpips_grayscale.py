@@ -55,7 +55,7 @@ class LPIPS(nn.Module):
                         new_key = f"lins.{lin_num}.model.1.weight"
                         if new_key in model_dict and model_dict[new_key].shape == value.shape:
                             filtered_dict[new_key] = value
-                            print(f"Mapped {key} -> {new_key}")
+                            # print(f"Mapped {key} -> {new_key}")
                 
                 if filtered_dict:
                     self.load_state_dict(filtered_dict, strict=False)

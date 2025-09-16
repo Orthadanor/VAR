@@ -19,9 +19,9 @@ from scipy import ndimage  # for: getting boundaries of image
 
 # Training
 import torch
-from pytorch_lightning.callbacks import ModelCheckpoint
-from pytorch_lightning.loggers import TensorBoardLogger
-import pytorch_lightning as pl
+# from pytorch_lightning.callbacks import ModelCheckpoint
+# from pytorch_lightning.loggers import TensorBoardLogger
+# import pytorch_lightning as pl
 # from baseline_utils import plot_3D
 import nibabel as nib
 

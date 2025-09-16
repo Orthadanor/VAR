@@ -225,20 +225,20 @@ class MetricLogger:
     def add_meter(self, name: str, meter: SmoothedValue):
         self.meters[name] = meter
     
-    def log_every(self, start_it: int, iters: int, iterable, print_freq: int, header: str = ""):
-        """Log every print_freq iterations"""
+    def log_every(self, is_master, start_it: int, iters: int, iterable, print_freq: int, header: str = ""):
+        """Log every print_freq iterations (only master process prints if is_master=True)"""
         i = start_it
         start_time = time.time()
         end = time.time()
         time_width = 0
-        
+
         def log_msg():
             return f"{header} {i}/{iters}:" + self.delimiter + str(self)
-        
+
         for obj in iterable:
             yield i, obj
             i += 1
-            if i % print_freq == 0:
+            if i % print_freq == 0 and is_master:
                 print(log_msg())
             if i >= iters:
                 break

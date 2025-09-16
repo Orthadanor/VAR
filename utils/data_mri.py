@@ -5,7 +5,7 @@ import numpy as np
 import PIL.Image as PImage
 from torch.utils.data import Dataset, random_split
 from torchvision.transforms import InterpolationMode, transforms
-from braTS_aug_utils import *
+from utils.braTS_aug_utils import *
 
 
 def normalize_01_into_pm1(x):
@@ -39,13 +39,15 @@ class IXI2DDataset(Dataset):
             # Convert to PIL Image as grayscale
             data_uint8 = (data * 255).astype(np.uint8)
             img = PImage.fromarray(data_uint8, mode='L')  # 'L' mode for grayscale
-        
+        else:
+            raise ValueError(f"Expected 2D array, got shape {data.shape} in file {self.files[idx]}")
         if self.transform:
             img = self.transform(img)
-            
+        if isinstance(img, torch.Tensor):
+            img = img.contiguous()
         return img, 0  # Always return class 0 (single class)
 
-def build_ixi_2d(data_path: str, final_reso: int, hflip=False, mid_reso=1.125):
+def build_ixi_2d(data_path: str, final_reso: int, hflip=False, mid_reso=1.125, is_master=True):
     # Build augmentations for grayscale
     # mid_reso = round(mid_reso * final_reso)  # Not needed if no resizing
     train_aug, val_aug = [
@@ -68,37 +70,35 @@ def build_ixi_2d(data_path: str, final_reso: int, hflip=False, mid_reso=1.125):
     num_classes = 1  # Single class for unconditional generation
     
     # Check data dimensions (without augmentation, should match your preprocessed data)
-    if len(train_set) > 0:
-        sample_img, _ = train_set[0]
-        print(f'[MRI Dataset] Sample image shape: {sample_img.shape}')
-        print(f'[MRI Dataset] Expected final_reso: {final_reso}x{final_reso}')
-        if sample_img.shape[-1] != final_reso or sample_img.shape[-2] != final_reso:
-            print(f'⚠️  WARNING: Sample image size {sample_img.shape[-2:]} does not match expected final_reso {final_reso}')
-            print(f'   Make sure your preprocessed data is already at the correct resolution!')
-    
-    print(f'[MRI Dataset] {len(train_set)=}, {len(val_set)=}, {num_classes=}')
-    print(f'[Classes] {train_set.classes}')
-    print_aug(train_aug, '[train] (NO resizing/cropping)')
-    print_aug(val_aug, '[val] (NO resizing/cropping)')
+    if is_master:
+        if len(train_set) > 0:
+            sample_img, _ = train_set[0]
+            print(f'[MRI Dataset] Sample image shape: {sample_img.shape}')
+            print(f'[MRI Dataset] Expected final_reso: {final_reso}x{final_reso}')
+            if sample_img.shape[-1] != final_reso or sample_img.shape[-2] != final_reso:
+                print(f'⚠️  WARNING: Sample image size {sample_img.shape[-2:]} does not match expected final_reso {final_reso}')
+                print(f'   Make sure your preprocessed data is already at the correct resolution!')
+        print(f'[MRI Dataset] {len(train_set)=}, {len(val_set)=}, {num_classes=}')
+        print(f'[Classes] {train_set.classes}')
+        print_aug(train_aug, '[train] (NO resizing/cropping)', is_master=is_master)
+        print_aug(val_aug, '[val] (NO resizing/cropping)', is_master=is_master)
     
     return num_classes, train_set, val_set
 
-def print_aug(transform, label):
-    print(f'Transform {label} = ')
-    if hasattr(transform, 'transforms'):
-        for t in transform.transforms:
-            print(t)
-    else:
-        print(transform)
-    print('---------------------------\n')
-
-# def braTS2d(data_path, crop_shape=(128, 128), train_split=0.95):
-#     return Dataset_Training.braTS2d(data_path, crop_shape, train_split)
+def print_aug(transform, label, is_master=True):
+    if is_master:
+        print(f'Transform {label} = ')
+        if hasattr(transform, 'transforms'):
+            for t in transform.transforms:
+                print(t)
+        else:
+            print(transform)
+        print('---------------------------\n')
 
 class BraTS2DDataset(Dataset):
     def __init__(self, root_dir, crop_shape=(128, 128), healthy_mask_crop=(128, 128, 96), transform=None):
-        self.root_dir = root_dir or "../../Dataset/ASNR-MICCAI-BraTS2023-Local-Synthesis-Challenge-Training"
-        self.output_dir = Path("../../Dataset/BraTS2023-2D-Slices")
+        self.root_dir = root_dir or "../Dataset/ASNR-MICCAI-BraTS2023-Local-Synthesis-Challenge-Training"
+        self.output_dir = Path("../Dataset/BraTS2023-2D-Slices")
         self.output_dir.mkdir(parents=True, exist_ok=True)  # Ensure the directory exists
 
         self.list_paths_t1n = list(Path(root_dir).rglob("**/BraTS-GLI-*-*-t1n.nii.gz"))
@@ -135,7 +135,7 @@ class BraTS2DDataset(Dataset):
             t1n_max_v = np.max(t1n)
             t1n /= t1n_max_v
 
-            ############################ Take the middle section of original t1n brains #####################################
+            ############################ Obtain slice-wise central crop of volume containing brain features #####################################
             # Process t1n images
             # Crop to whole brain (removes everything empty space)
             max_bbox_raw = compute_bbox(t1n)
@@ -155,15 +155,13 @@ class BraTS2DDataset(Dataset):
                     center_w - half_crop_w : center_w + half_crop_w,
                     z,
                 ]
-                if not np.any(t1n_slice > 0):
-                    print("Skipping completely dark slice")
-                else:
+                if np.any(t1n_slice > 0):
                     slice_path = self.output_dir / f"slice_{len(self.slices):05d}.npy"
                     np.save(slice_path, t1n_slice)
                     self.slices.append(slice_path)
                     
 
-            ############################ Take the section around healthy brain masks #####################################                
+            ############################ Slice-wise crop across volume centered around healthy feature masks #####################################                
             # Data augmentation: crop to region around healthy masks
             if self.healthy_mask_crop is not None:
                 shape = healthy_mask.shape[-3:]
@@ -196,9 +194,7 @@ class BraTS2DDataset(Dataset):
                 for z in range(t1n_crop_healthy.shape[-1]):
                     t1n_slice = t1n_crop_healthy[:, :, z]
                     # Ensure t1n_slice is a NumPy array before checking for non-zero values
-                    if not np.any(np.array(t1n_slice) > 0):  # Skip completely dark slices
-                        print("Skipping completely dark slice")
-                    else:
+                    if np.any(np.array(t1n_slice) > 0):  # Skip completely dark slices
                         slice_path = self.output_dir / f"slice_{len(self.slices):05d}.npy"
                         np.save(slice_path, t1n_slice)
                         self.slices.append(slice_path)
@@ -222,21 +218,35 @@ class BraTS2DDataset(Dataset):
 
         if self.transform:
             img = self.transform(img)
+        if isinstance(img, torch.Tensor):
+            img = img.contiguous()
         return img, 0
 
-def build_braTS2d(data_path, crop_shape=(128, 128), train_split=0.95):
+def build_braTS2d(data_path, crop_shape=(128, 128), train_split=0.95, is_master=True):
     
     standard_transforms = [
         transforms.ToTensor(),  # This will create 1-channel tensor for grayscale
         normalize_01_into_pm1,
     ]
-    
+
     standard_transforms = transforms.Compose(standard_transforms)
-    
+
     dataset = BraTS2DDataset(data_path, crop_shape=crop_shape, transform=standard_transforms)
     train_size = int(len(dataset) * train_split)
     val_size = len(dataset) - train_size
     train_set, val_set = random_split(dataset, [train_size, val_size])
 
-    print(f"[BraTS2D] Total slices: {len(dataset)}, Train: {len(train_set)}, Validation: {len(val_set)}")
+    # Print dataset info (similar to build_ixi_2d)
+    if is_master:
+        if len(train_set) > 0:
+            sample_img, _ = train_set[0]
+            print(f'[BraTS2D] Sample image shape: {sample_img.shape}')
+            print(f'[BraTS2D] Expected crop_shape: {crop_shape[0]}x{crop_shape[1]}')
+            if sample_img.shape[-1] != crop_shape[1] or sample_img.shape[-2] != crop_shape[0]:
+                print(f'⚠️  WARNING: Sample image size {sample_img.shape[-2:]} does not match expected crop_shape {crop_shape}')
+                print(f'   Make sure your preprocessed data is already at the correct resolution!')
+        print(f'[BraTS2D] {len(train_set)=}, {len(val_set)=}, num_classes=1')
+        print(f'[Classes] ["mid_brain"]')
+        print_aug(standard_transforms, '[train/val] (NO resizing/cropping)', is_master=is_master)
+
     return 0, train_set, val_set
